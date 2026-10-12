@@ -1,7 +1,8 @@
 import { chromium, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import type { ProviderResult, BrowserInput } from "../lib/types";
-import { browserTargets, type BrowserTarget } from "./browser.config";
+import { browserTargets, browserConfig, type BrowserTarget } from "./browser.config";
+
 const visible = async (page: Page, selector: string) =>
   page
     .locator(selector)
@@ -9,6 +10,7 @@ const visible = async (page: Page, selector: string) =>
     .first()
     .isVisible()
     .catch(() => false);
+
 export async function sessionBarrier(
   page: Page,
   answerSelector?: string,
@@ -49,6 +51,7 @@ export async function sessionBarrier(
       return parts.join(" ");
     }, answerSelector)
     .catch(() => text);
+
   if (
     /too many requests|rate limit reached|daily limit reached/i.test(
       interfaceText,
@@ -58,6 +61,7 @@ export async function sessionBarrier(
       status: "rate_limited",
       reason: "The free browser session reached its limit.",
     };
+
   const title = await page.title().catch(() => "");
   if (
     /^just a moment\s*[.!…]*$/i.test(title.trim()) ||
@@ -70,6 +74,7 @@ export async function sessionBarrier(
       reason:
         "The provider displayed a security verification page; no answer was collected.",
     };
+
   if (
     /duck\.ai is temporarily unavailable|something went wrong|unable to generate a response|service (?:is )?temporarily unavailable/i.test(
       interfaceText,
@@ -80,12 +85,14 @@ export async function sessionBarrier(
       reason:
         "The provider displayed a service error; no answer was collected.",
     };
+
   // A standard footer such as 'By clicking Ask you agree...' is not a wall.
   // Keep explicit consent dialogs separate; never automatically accept them.
   const dialogs = await page
     .locator('[role="dialog"],dialog[open],[aria-modal="true"]')
     .filter({ visible: true })
     .allTextContents();
+
   if (
     dialogs.some(
       (t) => /agree|accept/i.test(t) && /terms|privacy|consent/i.test(t),
@@ -95,6 +102,7 @@ export async function sessionBarrier(
       status: "blocked",
       reason: "The provider requires consent in a blocking dialog.",
     };
+
   if (
     /sign in to continue|log in to continue|sign into copilot|sign in to use (?:gemini|copilot|chatgpt)|log in to use (?:gemini|copilot|chatgpt)/i.test(
       interfaceText,
@@ -104,8 +112,10 @@ export async function sessionBarrier(
       status: "blocked",
       reason: "The provider requires sign-in before this session can continue.",
     };
+
   return null;
 }
+
 export async function readVisibleAnswer(
   answer: import("@playwright/test").Locator,
 ) {
@@ -151,6 +161,7 @@ export async function readVisibleAnswer(
       .trim();
   });
 }
+
 export async function collectOnPage(
   page: Page,
   target: BrowserTarget,
@@ -166,6 +177,7 @@ export async function collectOnPage(
     webSearchUsed: false,
     latencyMs: Date.now() - start,
   });
+
   page.setDefaultTimeout(6000);
   try {
     input.signal.throwIfAborted();
@@ -178,12 +190,15 @@ export async function collectOnPage(
       waitUntil: "domcontentloaded",
       timeout: 20000,
     });
+
     let barrier = await sessionBarrier(page, target.answer);
     if (barrier) return failure(barrier.status, barrier.reason);
+
     let before = await page
       .locator(target.answer)
       .filter({ visible: true })
       .count();
+
     if (!target.queryUrl) {
       const box = page.locator(target.input).filter({ visible: true }).first();
       await box.waitFor({ state: "visible", timeout: 12000 }).catch(() => {});
@@ -194,12 +209,14 @@ export async function collectOnPage(
           "blocked",
           "No usable public chat input found. Inspect the live page for a sign-in requirement or changed selectors.",
         );
+
       await input.onProgress?.(
         "submitting",
         "Sending your question.",
         page.url(),
       );
       await box.fill(input.prompt);
+
       const send = target.submit
         ? page.locator(target.submit).filter({ visible: true }).first()
         : undefined;
@@ -220,29 +237,36 @@ export async function collectOnPage(
         timeout: 20000,
       });
     }
+
     await input.onProgress?.(
       "waiting",
       "Question sent; waiting for the provider to answer.",
       page.url(),
     );
+
     let receivingReported = false;
     let previous = "",
       stable = 0,
       sawGenerating = false,
       searchObserved = false;
+
     while (!input.signal.aborted) {
       barrier = await sessionBarrier(page, target.answer);
       if (barrier) return failure(barrier.status, barrier.reason);
+
       searchObserved ||=
         !!target.search && (await visible(page, target.search));
+
       const answers = page.locator(target.answer).filter({ visible: true });
       const count = await answers.count();
       const answer = answers.last();
       const contents = target.answerText
         ? answer.locator(target.answerText).filter({ visible: true }).first()
         : answer;
+
       const text =
         count > before ? await readVisibleAnswer(contents).catch(() => "") : "";
+
       if (text && !receivingReported) {
         receivingReported = true;
         await input.onProgress?.(
@@ -251,10 +275,13 @@ export async function collectOnPage(
           page.url(),
         );
       }
+
       if (text.length > 60000)
         return failure("error", "The answer exceeded the capture limit.");
+
       const generating = await visible(page, target.stop);
       sawGenerating ||= generating;
+
       // Copy control must belong to the captured answer, not an old answer/page header.
       const controls =
         target.completionScope === "page"
@@ -262,6 +289,7 @@ export async function collectOnPage(
           : target.completionAncestor
             ? answer.locator(target.completionAncestor)
             : answer;
+
       const complete =
         count > before &&
         (await controls
@@ -270,8 +298,10 @@ export async function collectOnPage(
           .first()
           .isVisible()
           .catch(() => false));
+
       stable = text && text === previous && !generating ? stable + 1 : 0;
       previous = text;
+
       if (
         text.trim().length >= 20 &&
         text.trim() !== input.prompt.trim() &&
@@ -283,6 +313,7 @@ export async function collectOnPage(
           "Collecting the completed answer and its visible citations.",
           page.url(),
         );
+
         const links = await answer.locator("a[href]").evaluateAll((ns) =>
           ns
             .filter(
@@ -295,6 +326,7 @@ export async function collectOnPage(
               title: (n.textContent || "").trim(),
             })),
         );
+
         const seen = new Set<string>();
         const citations = links.flatMap((link) => {
           try {
@@ -313,6 +345,7 @@ export async function collectOnPage(
             return [];
           }
         });
+
         const model = target.model
           ? await page
               .locator(target.model)
@@ -321,6 +354,7 @@ export async function collectOnPage(
               .innerText()
               .catch(() => "")
           : "";
+
         return {
           status: "ok",
           answerText: text,
@@ -339,8 +373,10 @@ export async function collectOnPage(
           },
         };
       }
+
       await page.waitForTimeout(750);
     }
+
     return failure(
       "timeout",
       "No completed browser answer before the deadline; partial text was not scored.",
@@ -357,6 +393,7 @@ export async function collectOnPage(
     );
   }
 }
+
 export async function runBrowser(
   id: string,
   input: BrowserInput,
@@ -369,16 +406,37 @@ export async function runBrowser(
       webSearchUsed: false,
       latencyMs: 0,
     };
+
   let browser;
   try {
     input.signal.throwIfAborted();
     browser = await chromium.launch({
-      headless: true,
+      headless: browserConfig.headless,
       timeout: 15000,
       executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined,
-      args: ["--disable-dev-shm-usage"],
+      args: browserConfig.args,
     });
-    const context = await browser.newContext({ locale: "en-US" });
+
+    const context = await browser.newContext({
+      locale: "en-US",
+      viewport: browserConfig.viewport,
+      userAgent: browserConfig.userAgent,
+      proxy: process.env.RESIDENTIAL_PROXY_URL ? { server: process.env.RESIDENTIAL_PROXY_URL } : undefined,
+    });
+
+    // Stealth anti-bot script injection to bypass headless detection
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+      });
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en'],
+      });
+    });
+
     const page = await context.newPage();
     const abort = () => {
       void browser!.close().catch(() => {});

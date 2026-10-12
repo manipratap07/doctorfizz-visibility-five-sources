@@ -13,13 +13,13 @@ export type BrowserTarget = {
   // Public browser navigation, never a private provider API call.
   queryUrl?: string;
 };
+
 const copy =
   'button[aria-label*="Copy" i],button[title*="Copy" i],button[data-tooltip*="Copy" i],button[mattooltip*="Copy" i],button[data-test-id="copy-button"],button:has(mat-icon:has-text("content_copy"))';
 const stop =
   'button[aria-label*="Stop" i],button[title*="Stop" i],button[data-test-id="stop-button"],button:has(mat-icon:has-text("stop"))';
+
 // Scoped candidate selectors. A completed VPS adapter probe is required for readiness.
-// Gemini has returned a guest answer on the user's VPS; these DOM selectors still
-// need acceptance against that live DOM. Never use whole-page text as an answer.
 export const browserTargets: Record<string, BrowserTarget> = {
   chatgpt: {
     url: "https://chatgpt.com/",
@@ -61,7 +61,6 @@ export const browserTargets: Record<string, BrowserTarget> = {
     queryUrl: "https://www.google.com/search?udm=50",
     input:
       'textarea[name="q"],textarea[aria-label*="Ask" i],[contenteditable="true"][role="textbox"]',
-    // Unknown Google UI fails closed; ordinary search links are never scored.
     answer:
       '[data-testid="ai-mode-answer"],[data-aimode-answer],[role="region"][aria-label="AI response"]',
     completion: copy,
@@ -76,4 +75,20 @@ export const browserTargets: Record<string, BrowserTarget> = {
     completion: copy,
     stop,
   },
+};
+
+// Added anti-detection browser config for VPS execution
+export const browserConfig = {
+  headless: true,
+  args: [
+    '--disable-blink-features=AutomationControlled',
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--disable-gpu',
+    '--window-size=1920,1080',
+  ],
+  viewport: { width: 1920, height: 1080 },
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
 };
