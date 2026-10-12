@@ -179,7 +179,9 @@ test("Gemini captures scoped response content, source URLs, model label and sear
   <p>Sign in to connect to Google apps, create images, and more.</p>
   <a href="https://navigation.example">Site navigation</a>
   <script>document.querySelector('[contenteditable]').onkeydown=e=>{if(e.key==='Enter'){
-    const response=document.createElement('model-response');response.innerHTML='<message-content>Acme provides reliable business software. <a href="https://acme.com/reviews">Reviews</a></message-content><button aria-label="Copy response">Copy</button>';document.body.append(response);
+    const response=document.createElement('model-response');response.innerHTML='<message-content>Acme provides reliable business software. <a href="https://acme.com/reviews">Reviews</a></message-content>';document.body.append(response);
+    const promptCopy=document.createElement('button');promptCopy.setAttribute('aria-label','Copy prompt');document.body.append(promptCopy);
+    const responseCopy=document.createElement('button');responseCopy.setAttribute('aria-label','Copy');document.body.append(responseCopy);
     const activity=document.createElement('p');activity.textContent='Searching the web';document.body.append(activity);setTimeout(()=>activity.remove(),1300);
   }};</script>`,
   );
