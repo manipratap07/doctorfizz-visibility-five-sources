@@ -44,6 +44,13 @@ export type BatchPrompt = {
   bias: boolean;
 };
 export type ProviderResult = {
+  diagnostics?: {
+    phase: string;
+    answerRoots: number;
+    answerCharacters: number;
+    completionSeen: boolean;
+    generationSeen: boolean;
+  };
   browserEvidence?: BrowserEvidence;
   status: "ok" | "timeout" | "blocked" | "rate_limited" | "error";
   answerText?: string;

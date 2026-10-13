@@ -1,6 +1,6 @@
 {
   "name": "doctorfizz-llm-visibility",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "engines": {
     "node": "24.x"
   },
@@ -17,7 +17,10 @@
     "adapters:health": "tsx src/worker/health.ts",
     "preflight": "tsx scripts/preflight.ts",
     "browser:probe": "tsx src/worker/probe.ts",
-    "browser:inspect": "tsx src/worker/inspect.ts"
+    "browser:inspect": "tsx src/worker/inspect.ts",
+    "test:runtime": "node --import tsx --test tests/worker-runtime.node.ts",
+    "browser:acceptance": "node --import tsx scripts/browser-acceptance.ts",
+    "runtime:diagnose": "node --import tsx scripts/runtime-diagnose.ts"
   },
   "dependencies": {
     "bullmq": "^6.3.12",

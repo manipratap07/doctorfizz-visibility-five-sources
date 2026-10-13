@@ -20,6 +20,7 @@ export function providers() {
     maxConcurrency: 1,
     enabled: !(process.env.BROWSER_DISABLED_PROVIDERS || "")
       .split(",")
+      .map((value) => value.trim())
       .includes(id),
   }));
 }

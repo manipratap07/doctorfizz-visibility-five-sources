@@ -1,4 +1,6 @@
-import { chromium } from "@playwright/test";
+import { withBrowserPage } from "./browser-launch";
+import { runtimeInfo } from "./runtime-info";
+import { providers } from "../lib/providers.config";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { browserTargets } from "./browser.config";
@@ -16,17 +18,14 @@ async function main() {
     );
   const directory = join("internal-debug", id + "-" + Date.now());
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined,
-  });
+  const timeoutMs = providers().find((p) => p.id === id)!.timeoutMs;
+  const signal = AbortSignal.timeout(timeoutMs);
   const failures: { url: string; status?: number; error?: string }[] = [];
   const safeUrl = (raw: string) => {
     const u = new URL(raw);
     return u.origin + u.pathname;
   };
-  try {
-    const page = await browser.newPage();
+  await withBrowserPage(id, signal, async (page) => {
     page.on("response", (r) => {
       if (r.status() >= 400)
         failures.push({ url: safeUrl(r.url()), status: r.status() });
@@ -34,24 +33,44 @@ async function main() {
     page.on("requestfailed", (r) =>
       failures.push({ url: safeUrl(r.url()), error: r.failure()?.errorText }),
     );
-    await page.goto(target.url, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
-    await page.waitForTimeout(8000);
-    const barrier = await sessionBarrier(page, target.answer);
+    const submit = process.argv.includes("--submit");
+    if (!submit) {
+      await page.goto(target.url, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+      await page
+        .locator(target.input)
+        .first()
+        .waitFor({ timeout: 12000 })
+        .catch(() => {});
+    }
+    const barrier = !submit ? await sessionBarrier(page, target.answer) : null;
     const result =
-      process.argv.includes("--submit") && !barrier
+      submit && !barrier
         ? await collectOnPage(page, target, {
             prompt:
+              process.argv.find((a) => a.startsWith("--prompt="))?.slice(9) ||
               "What are three project management tools for a small business? Explain your choices.",
-            signal: AbortSignal.timeout(90000),
+            signal,
             onProgress: async (phase, message) => {
               console.log(JSON.stringify({ provider: id, phase, message }));
             },
           })
         : undefined;
+    // An aborted session is already closed; the result still contains stage diagnostics.
+    if (page.isClosed()) {
+      await writeFile(
+        join(directory, "report.json"),
+        JSON.stringify({ ...runtimeInfo(), provider: id, result }, null, 2),
+        { mode: 0o600 },
+      );
+      console.log(JSON.stringify({ provider: id, result, directory }));
+      process.exitCode = 1;
+      return;
+    }
     const report = {
+      ...runtimeInfo(),
       provider: id,
       pageUrl: page.url(),
       title: await page.title(),
@@ -70,16 +89,14 @@ async function main() {
             visible: (n as HTMLElement).getClientRects().length > 0,
           })),
         ),
-      buttons: await page
-        .locator("button")
-        .evaluateAll((ns) =>
-          ns.map((n) => ({
-            text: n.textContent?.trim(),
-            label: n.getAttribute("aria-label"),
-            title: n.getAttribute("title"),
-            testId: n.getAttribute("data-test-id"),
-          })),
-        ),
+      buttons: await page.locator("button").evaluateAll((ns) =>
+        ns.map((n) => ({
+          text: n.textContent?.trim(),
+          label: n.getAttribute("aria-label"),
+          title: n.getAttribute("title"),
+          testId: n.getAttribute("data-test-id"),
+        })),
+      ),
       answerRoots: await page.locator(target.answer).count(),
       failures,
     };
@@ -105,9 +122,8 @@ async function main() {
         failures,
       }),
     );
-  } finally {
-    await browser.close();
-  }
+    if (result && result.status !== "ok") process.exitCode = 1;
+  });
 }
 main().catch((e) => {
   console.error(e.message);

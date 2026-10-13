@@ -1,5 +1,6 @@
 import { Worker } from "bullmq";
 import pino from "pino";
+import { runtimeInfo } from "./runtime-info";
 import { redis, providerQueue } from "../lib/redis";
 import { query, pool } from "../lib/db";
 import { processBrowserRun } from "./process-run";
@@ -15,7 +16,11 @@ async function startup() {
     async (job) => {
       await processBrowserRun(job.data.runId, job.data.checkId);
     },
-    { connection: redis(), concurrency: 1 },
+    {
+      connection: redis(),
+      concurrency: 1,
+      name: "doctorfizz-" + runtimeInfo().sourceHash,
+    },
   );
   worker.on("failed", async (job, error) => {
     log.error({ event: "browser_job_failed", message: error.message });
@@ -27,6 +32,12 @@ async function startup() {
       await finish(job.data.checkId);
     }
   });
+  worker.on("error", (error) =>
+    log.error({ event: "browser_queue_error", message: error.message }),
+  );
+  worker.on("stalled", (jobId) =>
+    log.warn({ event: "browser_job_stalled", jobId }),
+  );
   workers.push(worker);
   const deadline = new Worker(
     "deadlines",
@@ -34,6 +45,9 @@ async function startup() {
       await finish(job.data.checkId, true);
     },
     { connection: redis(), concurrency: 10 },
+  );
+  deadline.on("error", (error) =>
+    log.error({ event: "deadline_queue_error", message: error.message }),
   );
   workers.push(deadline);
   let reconciling = false;
@@ -80,7 +94,7 @@ async function startup() {
   };
   await reconcile();
   const timer = setInterval(reconcile, 10000);
-  log.info({ event: "worker_ready" });
+  log.info({ event: "worker_ready", ...runtimeInfo() });
   for (const sig of ["SIGTERM", "SIGINT"])
     process.on(sig, async () => {
       clearInterval(timer);

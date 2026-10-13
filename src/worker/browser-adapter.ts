@@ -1,7 +1,10 @@
-import { chromium, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import type { ProviderResult, BrowserInput } from "../lib/types";
-import { browserTargets, browserConfig, type BrowserTarget } from "./browser.config";
+import { browserTargets, type BrowserTarget } from "./browser.config";
+
+import { withBrowserPage } from "./browser-launch";
+import { ADAPTER_VERSION } from "./runtime-info";
 
 const visible = async (page: Page, selector: string) =>
   page
@@ -119,7 +122,13 @@ export async function sessionBarrier(
 export async function readVisibleAnswer(
   answer: import("@playwright/test").Locator,
 ) {
-  return answer.evaluate((root) => {
+  // This expression is intentionally plain JavaScript. tsx/esbuild injects
+  // __name into nested TypeScript functions, but that helper does not exist
+  // in the page VM. Keeping browser-only code as a string prevents that rewrite.
+  return answer.evaluate(
+    new Function(
+      "root",
+      String.raw`
     const blocks = new Set([
       "P",
       "DIV",
@@ -133,7 +142,7 @@ export async function readVisibleAnswer(
       "OL",
       "BLOCKQUOTE",
     ]);
-    const walk = (node: Node): string => {
+    const walk = (node) => {
       if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
       if (!(node instanceof HTMLElement)) return "";
       if (
@@ -151,7 +160,7 @@ export async function readVisibleAnswer(
           (n) => n.tagName === "LI",
         );
         const start = Number(node.parentElement.getAttribute("start") || 1);
-        text = `${Number(node.getAttribute("value")) || start + siblings.indexOf(node)}. ${text.trim()}`;
+        text = (Number(node.getAttribute("value")) || start + siblings.indexOf(node)) + ". " + text.trim();
       }
       return blocks.has(node.tagName) ? "\n" + text + "\n" : text;
     };
@@ -159,7 +168,9 @@ export async function readVisibleAnswer(
       .replace(/\n[ \t]+/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
-  });
+  `,
+    ) as (root: HTMLElement) => string,
+  );
 }
 
 export async function collectOnPage(
@@ -168,12 +179,21 @@ export async function collectOnPage(
   input: BrowserInput,
 ): Promise<ProviderResult> {
   const start = Date.now();
+  let phase = "opening";
+  const diagnostics = {
+    phase,
+    answerRoots: 0,
+    answerCharacters: 0,
+    completionSeen: false,
+    generationSeen: false,
+  };
   const failure = (
     status: ProviderResult["status"],
     errorReason: string,
   ): ProviderResult => ({
     status,
     errorReason,
+    diagnostics: { ...diagnostics, phase },
     webSearchUsed: false,
     latencyMs: Date.now() - start,
   });
@@ -188,7 +208,7 @@ export async function collectOnPage(
     );
     await page.goto(target.url, {
       waitUntil: "domcontentloaded",
-      timeout: 20000,
+      timeout: 60000,
     });
 
     let barrier = await sessionBarrier(page, target.answer);
@@ -210,6 +230,7 @@ export async function collectOnPage(
           "No usable public chat input found. Inspect the live page for a sign-in requirement or changed selectors.",
         );
 
+      phase = "submitting";
       await input.onProgress?.(
         "submitting",
         "Sending your question.",
@@ -226,6 +247,7 @@ export async function collectOnPage(
     } else {
       const url = new URL(target.queryUrl);
       url.searchParams.set("q", input.prompt);
+      phase = "submitting";
       await input.onProgress?.(
         "submitting",
         "Opening your question in Google AI Mode.",
@@ -234,10 +256,11 @@ export async function collectOnPage(
       before = 0;
       await page.goto(url.href, {
         waitUntil: "domcontentloaded",
-        timeout: 20000,
+        timeout: 60000,
       });
     }
 
+    phase = "waiting";
     await input.onProgress?.(
       "waiting",
       "Question sent; waiting for the provider to answer.",
@@ -259,16 +282,21 @@ export async function collectOnPage(
 
       const answers = page.locator(target.answer).filter({ visible: true });
       const count = await answers.count();
+      diagnostics.answerRoots = Math.max(0, count - before);
       const answer = answers.last();
       const contents = target.answerText
         ? answer.locator(target.answerText).filter({ visible: true }).first()
         : answer;
 
       const text =
-        count > before ? await readVisibleAnswer(contents).catch(() => "") : "";
+        count > before && (await contents.isVisible())
+          ? await readVisibleAnswer(contents)
+          : "";
 
+      diagnostics.answerCharacters = text.length;
       if (text && !receivingReported) {
         receivingReported = true;
+        phase = "collecting";
         await input.onProgress?.(
           "collecting",
           "Receiving answer text from this source.",
@@ -281,6 +309,7 @@ export async function collectOnPage(
 
       const generating = await visible(page, target.stop);
       sawGenerating ||= generating;
+      diagnostics.generationSeen = sawGenerating;
 
       // Copy control must belong to the captured answer, not an old answer/page header.
       const controls =
@@ -299,6 +328,7 @@ export async function collectOnPage(
           .isVisible()
           .catch(() => false));
 
+      diagnostics.completionSeen = complete;
       stable = text && text === previous && !generating ? stable + 1 : 0;
       previous = text;
 
@@ -308,6 +338,7 @@ export async function collectOnPage(
         stable >= 3 &&
         (complete || sawGenerating)
       ) {
+        input.signal.throwIfAborted();
         await input.onProgress?.(
           "collecting",
           "Collecting the completed answer and its visible citations.",
@@ -355,6 +386,7 @@ export async function collectOnPage(
               .catch(() => "")
           : "";
 
+        input.signal.throwIfAborted();
         return {
           status: "ok",
           answerText: text,
@@ -364,7 +396,7 @@ export async function collectOnPage(
           latencyMs: Date.now() - start,
           browserEvidence: {
             captureMethod: "visible_dom",
-            adapterVersion: "browser-1.5",
+            adapterVersion: ADAPTER_VERSION,
             pageUrl: page.url(),
             capturedAt: new Date().toISOString(),
             answerHash: createHash("sha256").update(text).digest("hex"),
@@ -379,13 +411,13 @@ export async function collectOnPage(
 
     return failure(
       "timeout",
-      "No completed browser answer before the deadline; partial text was not scored.",
+      `Browser deadline exceeded during ${phase} (${diagnostics.answerRoots} response nodes, ${diagnostics.answerCharacters} characters, completion ${diagnostics.completionSeen ? "seen" : "not seen"}).`,
     );
   } catch (e) {
     return failure(
       input.signal.aborted ? "timeout" : "error",
       input.signal.aborted
-        ? "Browser deadline exceeded."
+        ? `Browser deadline exceeded during ${phase} (${diagnostics.answerRoots} response nodes, ${diagnostics.answerCharacters} characters, completion ${diagnostics.completionSeen ? "seen" : "not seen"}).`
         : "Public browser UI could not be captured. " +
             (e instanceof Error
               ? e.message.split("\n")[0].slice(0, 200)
@@ -407,55 +439,29 @@ export async function runBrowser(
       latencyMs: 0,
     };
 
-  let browser;
+  const start = Date.now();
   try {
-    input.signal.throwIfAborted();
-    browser = await chromium.launch({
-      headless: browserConfig.headless,
-      timeout: 15000,
-      executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined,
-      args: browserConfig.args,
-    });
-
-    const context = await browser.newContext({
-      locale: "en-US",
-      viewport: browserConfig.viewport,
-      userAgent: browserConfig.userAgent,
-      proxy: process.env.RESIDENTIAL_PROXY_URL ? { server: process.env.RESIDENTIAL_PROXY_URL } : undefined,
-    });
-
-    // Stealth anti-bot script injection to bypass headless detection
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => false,
-      });
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
-      });
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en'],
-      });
-    });
-
-    const page = await context.newPage();
-    const abort = () => {
-      void browser!.close().catch(() => {});
-    };
-    input.signal.addEventListener("abort", abort, { once: true });
-    try {
-      return await collectOnPage(page, target, input);
-    } finally {
-      input.signal.removeEventListener("abort", abort);
-    }
-  } catch {
+    return await withBrowserPage(id, input.signal, (page) =>
+      collectOnPage(page, target, input),
+    );
+  } catch (error) {
     return {
       status: input.signal.aborted ? "timeout" : "error",
-      errorReason:
-        "Browser could not start. Check the worker image and browser installation.",
+      errorReason: input.signal.aborted
+        ? "Browser deadline exceeded during startup."
+        : error instanceof Error &&
+            /proxy configuration|proxy URL configured/.test(error.message)
+          ? error.message
+          : "Browser could not start. Check the worker image and browser installation.",
       webSearchUsed: false,
-      latencyMs: 0,
+      latencyMs: Date.now() - start,
+      diagnostics: {
+        phase: "startup",
+        answerRoots: 0,
+        answerCharacters: 0,
+        completionSeen: false,
+        generationSeen: false,
+      },
     };
-  } finally {
-    await browser?.close().catch(() => {});
   }
 }

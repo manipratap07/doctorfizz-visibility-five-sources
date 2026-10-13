@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { runtimeInfo } from "./runtime-info";
 import { providers } from "../lib/providers.config";
 import { query } from "../lib/db";
 import { getAdapter } from "../lib/provider-adapters";
@@ -32,16 +34,46 @@ export async function processBrowserRun(runId: string, checkId: string) {
     "UPDATE checks SET status='running' WHERE id=$1 AND status='queued'",
     [checkId],
   );
+  const context = {
+    ...runtimeInfo(),
+    runId,
+    checkId,
+    provider: p.id,
+    promptHash: createHash("sha256")
+      .update(row.prompt_text)
+      .digest("hex")
+      .slice(0, 16),
+  };
+  console.log(
+    JSON.stringify({
+      event: "browser_run_started",
+      ...context,
+      timeoutMs: Math.min(p.timeoutMs, remaining),
+    }),
+  );
   const result = await getAdapter(p.id).run({
     prompt: row.prompt_text,
     signal: AbortSignal.timeout(Math.min(p.timeoutMs, remaining)),
     onProgress: async (phase, message, url) => {
+      console.log(
+        JSON.stringify({ event: "browser_run_progress", ...context, phase }),
+      );
       await query(
         "UPDATE llm_runs SET phase=$2,phase_message=$3,source_url=coalesce($4,source_url),phase_updated_at=now() WHERE id=$1 AND status='running'",
         [runId, phase, message, url || null],
       );
     },
   });
+  console.log(
+    JSON.stringify({
+      event: "browser_run_finished",
+      ...context,
+      status: result.status,
+      reason: result.errorReason,
+      latencyMs: result.latencyMs,
+      diagnostics: result.diagnostics,
+    }),
+  );
   if (result.status === "ok")
     await query(
       "UPDATE llm_runs SET phase='analysing',phase_message='Saving browser evidence and checking brand mentions.',phase_updated_at=now() WHERE id=$1 AND status='running'",

@@ -6,11 +6,19 @@ const state = vi.hoisted(() => ({
   db: null as unknown as PGlite,
   sent: [] as string[],
   observed: [] as string[],
+  failCapture: false,
 }));
 vi.mock("../src/lib/provider-adapters", () => ({
   getAdapter: () => ({
     run: async (input: import("../src/lib/types").BrowserInput) => {
       state.sent.push(input.prompt);
+      if (state.failCapture)
+        return {
+          status: "timeout",
+          errorReason: "Fixture capture timeout",
+          webSearchUsed: false,
+          latencyMs: 10,
+        };
       for (const phase of [
         "opening",
         "submitting",
@@ -346,4 +354,48 @@ it("backfills existing single-question links without changing their answers or b
     phase: "completed",
     answer_text: "Original captured answer.",
   });
+});
+
+it("all five real job-handler failures complete the batch and refund it without scores", async () => {
+  const owner = randomUUID(),
+    site = randomUUID();
+  await state.db.query("INSERT INTO visitors(id) VALUES($1)", [owner]);
+  await state.db.query(
+    "INSERT INTO site_profiles(id,visitor_id,brand,profile) VALUES($1,$2,$3,'{}')",
+    [
+      site,
+      owner,
+      JSON.stringify({
+        name: "Failure fixture",
+        domain: "fixture.test",
+        aliases: [],
+      }),
+    ],
+  );
+  const created = await createCheck(owner, "failure-fixture-ip", {
+    ...input(),
+    profileId: site,
+    providers: ["gemini"],
+  });
+  state.failCapture = true;
+  try {
+    for (const run of (await getCheck(created.checkId))!.runs)
+      await processBrowserRun(run.id, created.checkId);
+  } finally {
+    state.failCapture = false;
+  }
+  const check = (await getCheck(created.checkId))!;
+  expect(check.status).toBe("completed");
+  expect(check.refunded).toBe(true);
+  expect(check.runs).toHaveLength(5);
+  expect(
+    check.runs.every(
+      (r) =>
+        r.status === "timeout" &&
+        r.phase === "failed" &&
+        !r.answer_text &&
+        !r.analysis,
+    ),
+  ).toBe(true);
+  expect(await usage(owner, "failure-fixture-ip")).toBe(5);
 });
