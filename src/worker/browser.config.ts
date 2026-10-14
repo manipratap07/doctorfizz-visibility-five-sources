@@ -10,6 +10,9 @@ export type BrowserTarget = {
   submit?: string;
   model?: string;
   search?: string;
+  // Registrable domains owned by the provider: their links (help, terms, privacy,
+  // internal redirects) are interface chrome, not citations.
+  ownDomains?: string[];
   // Public browser navigation, never a private provider API call.
   queryUrl?: string;
 };
@@ -24,13 +27,14 @@ export const browserTargets: Record<string, BrowserTarget> = {
   chatgpt: {
     url: "https://chatgpt.com/",
     input:
-      '#prompt-textarea,[contenteditable="true"][role="textbox"],textarea[placeholder*="Message" i]',
-    answer: '[data-message-author-role="assistant"]',
-    answerText: ".markdown",
-    completion: copy,
-    completionAncestor:
-      'xpath=ancestor::*[starts-with(@data-testid,"conversation-turn")][1]',
+      '#prompt-textarea,#mobile-composer-prompt,textarea[name="prompt"],[contenteditable="true"][role="textbox"],textarea[placeholder*="Ask ChatGPT" i],textarea[placeholder*="Message" i]',
+    answer:
+      'li[data-message-role="assistant"],[data-message-author-role="assistant"]',
+    answerText: "[data-assistant-markdown-root],.markdown",
+    // The logged-out UI marks the assistant turn itself once streaming ends.
+    completion: "xpath=self::*[@data-message-complete]",
     stop,
+    ownDomains: ["chatgpt.com", "openai.com", "oaiusercontent.com"],
   },
   gemini: {
     url: "https://gemini.google.com/",
@@ -46,49 +50,20 @@ export const browserTargets: Record<string, BrowserTarget> = {
     model:
       '[data-test-id="bard-mode-menu-button"],button:has-text("Flash-Lite")',
     search: "text=/^Searching the web$/i",
-  },
-  copilot: {
-    url: "https://copilot.microsoft.com/",
-    input:
-      'textarea[placeholder*="Message" i],textarea[placeholder*="Ask" i],textarea[aria-label*="Message" i]',
-    answer:
-      '[data-testid="chat-message-assistant"],[data-content="ai-message"]',
-    completion: copy,
-    stop,
+    ownDomains: ["google.com", "gstatic.com", "googleusercontent.com"],
   },
   "google-ai": {
+    // Type into the /ai page like a visitor. Opening search?udm=50&q=... directly
+    // from a fresh profile is what triggered Google's /sorry/ page.
     url: "https://www.google.com/ai",
-    queryUrl: "https://www.google.com/search?udm=50",
     input:
       'textarea[name="q"],textarea[aria-label*="Ask" i],[contenteditable="true"][role="textbox"]',
-    answer:
-      '[data-testid="ai-mode-answer"],[data-aimode-answer],[role="region"][aria-label="AI response"]',
-    completion: copy,
+    // AI Mode turn root; Google sets data-complete="true" once rendering ends.
+    answer: '[data-subtree="aimc"]',
+    answerText: '[data-container-id="main-col"]',
+    completion: 'xpath=self::*[@data-complete="true"]',
     stop,
     search: "text=/^(Searching the web|Searching)$/i",
+    ownDomains: ["google.com", "google.co.in", "gstatic.com", "googleusercontent.com"],
   },
-  duckai: {
-    url: "https://duck.ai/",
-    input: 'textarea,[contenteditable="true"][role="textbox"]',
-    submit: 'button:has-text("Ask")',
-    answer: '[data-testid="assistant-message"],[data-role="assistant"]',
-    completion: copy,
-    stop,
-  },
-};
-
-// Added anti-detection browser config for VPS execution
-export const browserConfig = {
-  headless: true,
-  args: [
-    '--disable-blink-features=AutomationControlled',
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-accelerated-2d-canvas',
-    '--disable-gpu',
-    '--window-size=1920,1080',
-  ],
-  viewport: { width: 1920, height: 1080 },
-  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
 };

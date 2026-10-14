@@ -1,24 +1,24 @@
 # Start here — new repository, existing VPS, Vercel
 
-This ZIP contains v1.5.0. It has five manual questions and exactly ChatGPT, Gemini, Microsoft Copilot, Google AI Mode and Duck.ai. Extraction places package.json at the folder root. The frontend is Vercel; browser collection is the VPS. Both must run this release.
+This ZIP contains v1.6.0. It takes two to five manual questions and exactly three sources: ChatGPT, Gemini and Google AI Mode. Extraction places package.json at the folder root. The frontend is Vercel; browser collection is the VPS. Both must run this release.
 
 ## 1. Open and inspect locally
 
-Extract to a new folder named DoctorFizz_Five_Sources. In VS Code open that folder, then use a **local Windows PowerShell terminal**. Its prompt starts with PS C:\, not root@.
+Extract to a new folder named DoctorFizz_Visibility_v1_6. In VS Code open that folder, then use a **local Windows PowerShell terminal**. Its prompt starts with PS C:\, not root@.
 
 ```powershell
 Test-Path .\package.json
 (Get-Content .\package.json -Raw | ConvertFrom-Json).version
 ```
 
-Expected: True and 1.5.0. If False, enter the extracted folder that directly contains package.json first.
+Expected: True and 1.6.0. If False, enter the extracted folder that directly contains package.json first.
 
 ## 2. Upload this ZIP to the existing VPS
 
 In local PowerShell, use the actual download location. This example assumes the Downloads folder:
 
 ```powershell
-scp "$env:USERPROFILE\Downloads\DoctorFizz_LLM_Visibility_Checker_Five_Sources_v1_5.zip" root@187.127.186.47:/root/DoctorFizz_Five_Sources_v1_5.zip
+scp "$env:USERPROFILE\Downloads\DoctorFizz_LLM_Visibility_Checker_v1_6.zip" root@187.127.186.47:/root/DoctorFizz_v1_6.zip
 ```
 
 Expected: file transfer reaches 100%. Enter the VPS password privately. If the ZIP is elsewhere, replace only its local path.
@@ -34,19 +34,32 @@ Expected: root@srv1780228:~#. Only now run Linux commands. Use Ctrl+C if PowerSh
 In the **VPS SSH terminal**:
 
 ```bash
-python3 -m zipfile -e /root/DoctorFizz_Five_Sources_v1_5.zip /root/doctorfizz-five-v15
-python3 -c 'import json; print(json.load(open("/root/doctorfizz-five-v15/package.json"))["version"])'
+python3 -m zipfile -e /root/DoctorFizz_v1_6.zip /root/doctorfizz-v16
+python3 -c 'import json; print(json.load(open("/root/doctorfizz-v16/package.json"))["version"])'
 ```
 
-Expected: 1.5.0. Then, when no DoctorFizz check is currently running:
+Expected: 1.6.0. Before upgrading, put the residential proxy in the existing VPS `.env` (the upgrade keeps values that are already there, and the worker reads `.env` only when its container is created):
 
 ```bash
-bash /root/doctorfizz-five-v15/deploy/upgrade-vps.sh
+nano /opt/doctorfizz-llm-visibility/doctorfizz-visibility/.env
 ```
 
-Expected: backup confirmation, Docker builds, healthy PostgreSQL/Redis and started web/worker. The script retains runtime secrets/database volumes and only upgrades doctorfizz-llm. Do not use Docker down/prune or remove volumes.
+Add or edit these two lines with your proxy provider's HTTP gateway. Keep the literal text `{session}` where your provider expects a sticky-session id (for example Bright Data `-session-{session}`, Oxylabs `-sessid-{session}`); the worker replaces it with a new id for every run:
 
-## 3. Verify the backend and Gemini adapter
+```text
+RESIDENTIAL_PROXY_URL=http://USER-session-{session}:PASS@GATEWAY:PORT
+REQUIRE_PROXY=true
+```
+
+Then, when no DoctorFizz check is currently running:
+
+```bash
+bash /root/doctorfizz-v16/deploy/upgrade-vps.sh
+```
+
+Expected: backup confirmation, Docker builds (the first build also installs Google Chrome), healthy PostgreSQL/Redis and started web/worker. The script retains runtime secrets/database volumes and only upgrades doctorfizz-llm. Do not use Docker down/prune or remove volumes.
+
+## 3. Verify the backend, the proxy and each source
 
 In the VPS SSH terminal:
 
@@ -58,14 +71,20 @@ docker compose -p doctorfizz-llm exec -T web node -e 'fetch("http://127.0.0.1:30
 Expected: HTTP 200 and {"status":"ready"}. This checks the app/database, not external LLM availability.
 
 ```bash
+docker compose -p doctorfizz-llm logs worker | grep browser_egress
+```
+
+Expected: `"proxy":true` and an `egressIp` that is **not** 187.127.186.47. If it shows the VPS IP, the proxy is not applied: fix `.env`, then run `docker compose -p doctorfizz-llm up -d --no-deps worker` (a plain restart or exec does not reload `.env`) and check again.
+
+```bash
 docker compose -p doctorfizz-llm exec -T worker npm run browser:probe -- --provider=gemini --submit
 ```
 
-Expected acceptance: status ready plus browser evidence. The earlier whole-page Gemini test succeeded, but this specific scoped adapter must also pass. If it fails, run browser:inspect as described in README.md and adjust selectors against real DOM; do not call the collector working yet.
+Repeat with `--provider=chatgpt` and `--provider=google-ai`. Expected acceptance for each: status ready plus browser evidence. If it fails, run browser:inspect as described in README.md and adjust selectors against real DOM; do not call the collector working yet.
 
 ## 4. Create your new GitHub repository
 
-Use your own GitHub account. Create an empty **private** repository, for example doctorfizz-visibility-five-sources. Do not initialise it with another README or gitignore. Keep it private while testing, according to your earlier preference not to share this work with the team.
+Use your own GitHub account. Create an empty **private** repository, for example doctorfizz-visibility. Do not initialise it with another README or gitignore. Keep it private while testing, according to your earlier preference not to share this work with the team.
 
 Switch to **local PowerShell**, in the extracted project folder. These commands do not belong in the SSH terminal:
 
@@ -78,8 +97,8 @@ git status --short
 Review the file list. .env/.env.local, .vercel, node_modules, .next, internal-debug and test outputs must not be staged. The supplied .gitignore excludes them. The example settings files contain placeholders and may be committed.
 
 ```powershell
-git commit -m "Add five-source browser visibility checker"
-git remote add origin https://github.com/YOUR_USERNAME/doctorfizz-visibility-five-sources.git
+git commit -m "Add DoctorFizz browser visibility checker v1.6"
+git remote add origin https://github.com/YOUR_USERNAME/doctorfizz-visibility.git
 git push -u origin main
 ```
 
@@ -119,11 +138,11 @@ This moves the existing DoctorFizz backend's allowed frontend origin to the new 
 
 1. Open the new production domain.
 2. Enter your business or website and click Analyse my brand.
-3. Type all five of your own questions. No generated prompt cards should appear.
-4. Exactly five source choices should appear. Clear the selection and choose Gemini for the first test after its adapter acceptance passes.
-5. Click Run my five questions. With Gemini only, five browser runs should appear. Collection stages should update from the worker and completed answers should appear as they arrive.
+3. Type two to five of your own questions. No generated prompt cards should appear.
+4. Exactly three source choices should appear (ChatGPT, Gemini, Google AI Mode). For the first test, choose only a source whose adapter probe passed.
+5. Write at least two questions and click Run my questions. With one source selected, one browser run per question should appear. Collection stages should update from the worker and completed answers should appear as they arrive.
 6. Open each question tab and response drawer. Check that the question matches, answers contain actual collected text, and readable source URLs appear only when captured. Export the CSV.
 7. Repeat the layout check on a mobile device or narrow window. Input, progress and result controls should remain usable without horizontal overflow.
-8. Test other sources separately. Login/verification/service errors are real failures and must stay excluded from the score. All five selected sources create 25 attempts, not five guaranteed answers.
+8. Test other sources separately. Login/verification/service errors are real failures and must stay excluded from the score. Five questions on all three sources create 15 attempts, not 15 guaranteed answers.
 
 If the source choices say backend_update_required, the VPS has not received this release. If the backend is unavailable, check its health and bridge settings privately. If an external source fails, rebuilding Vercel will not resolve that source's access barrier.

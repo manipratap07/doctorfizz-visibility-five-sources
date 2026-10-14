@@ -40,8 +40,8 @@ const steps = [
     "Add your website or business name so we can check mentions of your brand.",
   ],
   [
-    "Write five questions",
-    "Type five questions in your own words. Each question will be sent exactly as written.",
+    "Write 2–5 questions",
+    "Type two to five questions in your own words. Each question will be sent exactly as written.",
   ],
   [
     "Follow the collection",

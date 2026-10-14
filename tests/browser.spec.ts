@@ -156,10 +156,10 @@ test("allows ordinary terms footers but stops at a blocking consent dialog", asy
     reason: expect.stringContaining("consent"),
   });
 });
-test("a Duck.ai service failure never becomes an answer", async ({ page }) => {
+test("a provider service failure never becomes an answer", async ({ page }) => {
   await fixture(
     page,
-    "<textarea></textarea><p>Duck.ai is temporarily unavailable. Anonymous code 02f8.</p>",
+    "<textarea></textarea><p>The service is temporarily unavailable. Please try again later.</p>",
   );
   const result = await collectOnPage(page, target, {
     prompt: "Which tools should a small business consider?",
@@ -213,53 +213,97 @@ test("Gemini answer prose mentioning service failures is not a service error", a
   );
   expect(await sessionBarrier(page, browserTargets.gemini.answer)).toBeNull();
 });
-test("ChatGPT completion controls are scoped to the new response turn", async ({
+test("ChatGPT waits for the new turn's completion marker and ignores the old turn", async ({
   page,
 }) => {
   await fixture(
     page,
-    `<div id="prompt-textarea" contenteditable="true"></div>
-    <article data-testid="conversation-turn-0"><div data-message-author-role="assistant"><div class="markdown">Old unrelated response.</div></div><button aria-label="Copy">Copy</button></article>
-    <script>document.querySelector('[contenteditable]').onkeydown=e=>{if(e.key==='Enter'){
-    const turn=document.createElement('article');turn.dataset.testid='conversation-turn-1';turn.innerHTML='<div data-message-author-role="assistant"><div class="markdown">Acme is a useful tool for business tasks.</div></div><button aria-label="Copy">Copy</button>';document.body.append(turn);
+    `<textarea id="mobile-composer-prompt" name="prompt"></textarea>
+    <ol><li data-message-role="assistant" data-message-complete><div data-assistant-markdown-root>Old unrelated response.</div></li></ol>
+    <script>document.querySelector('textarea').onkeydown=e=>{if(e.key==='Enter'){
+    const turn=document.createElement('li');turn.dataset.messageRole='assistant';turn.innerHTML='<div data-assistant-markdown-root>Acme is a useful tool</div>';document.querySelector('ol').append(turn);
+    setTimeout(()=>{turn.firstChild.textContent='Acme is a useful tool for business tasks.';},900);
+    setTimeout(()=>{turn.setAttribute('data-message-complete','');},2500);
     }};</script>`,
   );
+  const started = Date.now();
   const result = await collectOnPage(
     page,
     { ...browserTargets.chatgpt, url: target.url },
     {
       prompt: "Which tools are useful for businesses?",
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(9000),
     },
   );
   expect(result.status).toBe("ok");
   expect(result.answerText).toBe("Acme is a useful tool for business tasks.");
+  expect(result.browserEvidence?.completion).toBe("answer_control");
+  expect(Date.now() - started).toBeGreaterThan(2500);
 });
-test("Google AI Mode navigates a public query and captures no ordinary search results", async ({
+test("Google AI Mode is typed into, and captures only the AI answer without map text or Google's own links", async ({
   page,
 }) => {
-  await fixture(page, "<p>AI Mode</p>");
-  await page.route("**/google-fixture?**", (r) => {
-    expect(new URL(r.request().url()).searchParams.get("q")).toBe(
-      "Which tools help a small business?",
-    );
-    return r.fulfill({
-      contentType: "text/html",
-      body: '<div id="search">Ordinary search result mentioning Acme.</div>',
-    });
-  });
+  await fixture(
+    page,
+    `<textarea name="q"></textarea><div id="search">Ordinary search result mentioning Beta.</div>
+    <script>document.querySelector('textarea').onkeydown=e=>{if(e.key==='Enter'){
+    const root=document.createElement('div');root.dataset.subtree='aimc';
+    root.innerHTML='<div data-container-id="main-col"><div role="region" aria-label="Map of tools" data-artifact-type="map">Map data ©2026 <a href="https://www.mapbox.com/about/maps">Terms</a></div><p>Acme helps small businesses. <a href="https://www.google.com/url?q=https://acme.com/">acme.com</a> <a href="https://policies.google.com/privacy">Privacy</a></p></div>';
+    document.body.append(root);setTimeout(()=>root.dataset.complete='true',600);
+    }};</script>`,
+  );
   const result = await collectOnPage(
     page,
-    {
-      ...browserTargets["google-ai"],
-      url: target.url,
-      queryUrl: "http://127.0.0.1:3000/google-fixture?udm=50",
-    },
+    { ...browserTargets["google-ai"], url: target.url },
     {
       prompt: "Which tools help a small business?",
-      signal: AbortSignal.timeout(1800),
+      signal: AbortSignal.timeout(9000),
     },
   );
-  expect(result.status).toBe("timeout");
-  expect(result.answerText).toBeUndefined();
+  expect(result.status).toBe("ok");
+  expect(result.answerText).toBe("Acme helps small businesses. acme.com Privacy");
+  expect(result.answerText).not.toMatch(/Map data|Ordinary search/);
+  expect(result.citations).toEqual([
+    { url: "https://acme.com/", title: "acme.com", domain: "acme.com" },
+  ]);
+});
+test("a Cloudflare interstitial that clears by itself is waited out, not reported as blocked", async ({
+  page,
+}) => {
+  await fixture(
+    page,
+    `<title>Just a moment...</title><p>Checking your browser.</p>
+    <script>setTimeout(()=>{document.title='Chat';document.body.innerHTML='<textarea></textarea>';
+    document.querySelector('textarea').onkeydown=e=>{if(e.key==='Enter'){
+      const a=document.createElement('div');a.dataset.role='assistant';a.innerHTML='Acme is recommended for invoicing. <button aria-label="Copy">Copy</button>';document.body.append(a);
+    }};},2000);</script>`,
+  );
+  const result = await collectOnPage(page, target, {
+    prompt: "Which invoicing tools are good?",
+    signal: AbortSignal.timeout(12000),
+  });
+  expect(result.status).toBe("ok");
+  expect(result.answerText).toBe("Acme is recommended for invoicing.");
+});
+test("a Cloudflare interstitial that never clears is still reported as blocked", async ({
+  page,
+}) => {
+  await fixture(page, "<title>Just a moment...</title><p>Checking your browser.</p>");
+  const result = await collectOnPage(page, target, {
+    prompt: "Which invoicing tools are good?",
+    signal: AbortSignal.timeout(3000),
+  });
+  expect(result.status).toBe("blocked");
+  expect(result.errorReason).toMatch(/security verification/);
+});
+test("a question naming a CAPTCHA vendor in the page URL is not mistaken for a challenge", async ({
+  page,
+}) => {
+  await page.route("**/local-browser-fixture**", (r) =>
+    r.fulfill({ contentType: "text/html", body: "<textarea></textarea>" }),
+  );
+  await page.goto(
+    "http://127.0.0.1:3000/local-browser-fixture?q=is+hcaptcha.com+better+than+challenges.cloudflare.com",
+  );
+  expect(await sessionBarrier(page)).toBeNull();
 });

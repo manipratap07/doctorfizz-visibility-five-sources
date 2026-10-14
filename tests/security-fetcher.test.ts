@@ -61,6 +61,22 @@ it("pins the validated DNS address and returns capped HTML", async () => {
   fakes.agents[0].connect.lookup("public.example", {}, cb);
   expect(cb).toHaveBeenCalledWith(null, "8.8.8.8", 4);
 });
+it("answers the {all:true} lookup form that Node's autoSelectFamily uses", async () => {
+  fakes.lookup.mockResolvedValue([
+    { address: "2001:4860:4860::8888", family: 6 },
+  ]);
+  fakes.request.mockResolvedValue({
+    statusCode: 200,
+    headers: { "content-type": "text/html" },
+    body: body([Buffer.from("<title>Brand</title>")]),
+  });
+  await safeFetch("https://public.example");
+  const cb = vi.fn();
+  fakes.agents[0].connect.lookup("public.example", { all: true }, cb);
+  expect(cb).toHaveBeenCalledWith(null, [
+    { address: "2001:4860:4860::8888", family: 6 },
+  ]);
+});
 it("rejects HTML over one MiB", async () => {
   fakes.request.mockResolvedValue({
     statusCode: 200,

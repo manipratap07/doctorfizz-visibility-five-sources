@@ -16,7 +16,7 @@ export default function StructuredData() {
         mainEntity: [
           {
             q: "What does this check measure?",
-            a: "It checks five user-written questions against selected chatbot websites in browser sessions for brand mentions, recommendations and citations.",
+            a: "It checks two to five user-written questions against selected chatbot websites in browser sessions for brand mentions, recommendations and citations.",
           },
           {
             q: "Are these permanent rankings?",

@@ -13,7 +13,7 @@ function setup() {
   vi.stubEnv("VERCEL", "1");
 }
 describe("Vercel API bridge", () => {
-  it("shows exactly five current sources and disables sources missing from an older VPS", async () => {
+  it("shows exactly the three current sources and disables sources missing from an older VPS", async () => {
     setup();
     vi.stubGlobal(
       "fetch",
@@ -22,13 +22,44 @@ describe("Vercel API bridge", () => {
           JSON.stringify({
             providers: [
               {
-                id: "copilot",
+                id: "chatgpt",
                 enabled: true,
                 configured: true,
                 readiness: "blocked",
               },
               { id: "grok-web", enabled: true },
             ],
+            turnstileKey: "",
+            contract: 2,
+          }),
+        ),
+      ),
+    );
+    const config = await getToolConfig();
+    expect(config.providers.map((p) => p.id)).toEqual([
+      "chatgpt",
+      "gemini",
+      "google-ai",
+    ]);
+    expect(config.providers.find((p) => p.id === "gemini")).toMatchObject({
+      enabled: false,
+      configured: false,
+      readiness: "backend_update_required",
+    });
+    expect(config.providers.find((p) => p.id === "chatgpt")?.readiness).toBe(
+      "blocked",
+    );
+  });
+  it("disables every source when the VPS runs an older release without the v1.6 contract", async () => {
+    setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            providers: ["chatgpt", "gemini", "copilot", "google-ai", "duckai"].map(
+              (id) => ({ id, enabled: true, configured: true, readiness: "ready" }),
+            ),
             turnstileKey: "",
           }),
         ),
@@ -38,18 +69,43 @@ describe("Vercel API bridge", () => {
     expect(config.providers.map((p) => p.id)).toEqual([
       "chatgpt",
       "gemini",
-      "copilot",
       "google-ai",
-      "duckai",
     ]);
-    expect(config.providers.find((p) => p.id === "gemini")).toMatchObject({
-      enabled: false,
-      configured: false,
-      readiness: "backend_update_required",
+    for (const p of config.providers)
+      expect(p).toMatchObject({
+        enabled: false,
+        readiness: "backend_update_required",
+        reason: expect.stringContaining("v1.6"),
+      });
+  });
+  it("renders with every source disabled instead of throwing when the VPS is unreachable", async () => {
+    setup();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const failure of [
+      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+      vi.fn().mockResolvedValue(new Response("nope", { status: 401 })),
+      vi.fn().mockResolvedValue(new Response("<html>bad gateway</html>")),
+    ]) {
+      vi.stubGlobal("fetch", failure);
+      const config = await getToolConfig();
+      expect(config.turnstileKey).toBe("");
+      expect(config.providers.map((p) => p.id)).toEqual([
+        "chatgpt",
+        "gemini",
+        "google-ai",
+      ]);
+      for (const p of config.providers)
+        expect(p).toMatchObject({
+          enabled: false,
+          readiness: "backend_unavailable",
+        });
+    }
+    expect(logged).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(logged.mock.calls[1][0])).toMatchObject({
+      event: "backend_config_failed",
+      message: "The check service configuration is unavailable.",
     });
-    expect(config.providers.find((p) => p.id === "copilot")?.readiness).toBe(
-      "blocked",
-    );
+    logged.mockRestore();
   });
   it("keeps browser cookies, CSV downloads and streams while replacing spoofed identity headers", async () => {
     setup();

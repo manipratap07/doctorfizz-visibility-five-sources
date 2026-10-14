@@ -42,8 +42,11 @@ export async function safeFetch(raw: string) {
     const pinned = records[0];
     const dispatcher = new Agent({
       connect: {
-        lookup: (_hostname, _options, cb) =>
-          cb(null, pinned.address, pinned.family),
+        // Node 20+ autoSelectFamily asks for the {all:true} array form.
+        lookup: (_hostname, options, cb) =>
+          options.all
+            ? cb(null, [{ address: pinned.address, family: pinned.family }])
+            : cb(null, pinned.address, pinned.family),
       },
     });
     try {

@@ -52,6 +52,12 @@ export async function sameOrigin() {
   if (!app) throw new Error("APP_URL is required.");
   if (h.get("sec-fetch-site") === "cross-site")
     throw new Error("Origin is not allowed.");
-  if (o && new URL(o).origin !== new URL(app).origin)
+  // APP_URL is the canonical site; ALLOWED_ORIGINS lists other frontends that
+  // relay to this backend (e.g. the Vercel deployment), comma-separated.
+  const allowed = [app, ...(process.env.ALLOWED_ORIGINS || "").split(",")]
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .map((v) => new URL(v).origin);
+  if (o && !allowed.includes(new URL(o).origin))
     throw new Error("Origin is not allowed.");
 }

@@ -33,3 +33,6 @@ UPDATE llm_runs r SET prompt_id=c.prompt_id,prompt_text=c.prompt_text,prompt_bia
  phase=CASE WHEN r.status='ok' THEN 'completed' WHEN r.status IN ('queued','running') THEN r.phase ELSE 'failed' END,
  phase_message=CASE WHEN r.status='ok' THEN 'Answer and evidence saved.' WHEN r.status IN ('queued','running') THEN r.phase_message ELSE coalesce(r.reason,'This source did not return an answer.') END
  FROM checks c WHERE c.id=r.check_id AND r.prompt_text IS NULL;
+-- Allowance rows must outlive their 7-day checks so the 30-day limit holds.
+ALTER TABLE usage_events DROP CONSTRAINT IF EXISTS usage_events_check_id_fkey;
+ALTER TABLE usage_events ADD CONSTRAINT usage_events_check_id_fkey FOREIGN KEY (check_id) REFERENCES checks(id) ON DELETE SET NULL;

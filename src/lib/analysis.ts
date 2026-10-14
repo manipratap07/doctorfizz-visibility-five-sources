@@ -29,36 +29,77 @@ export function matches(text: string, values: string[]) {
   const n = " " + normalize(text) + " ";
   return values.some((a) => n.includes(" " + a + " "));
 }
+const legal =
+  /(?:[\s,]+(?:pvt|private|ltd|limited|inc|llc|llp|gmbh|corp|corporation|co)\.?)+\s*$/i;
+// "BigBasket" -> "Big Basket", "Acme Cloud Pvt Ltd" -> "Acme Cloud". Only multi-word
+// forms, matched case-sensitively as written, so prose like "no broker" cannot match.
+function derivedForms(name: string) {
+  const bare = name.replace(legal, "").trim();
+  return [...new Set([bare, bare.replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2")])]
+    .map((f) => f.split(/\s+/))
+    .filter(
+      (t) =>
+        t.join(" ") !== name.trim() &&
+        t.length > 1 &&
+        t.every((x) => x.length > 1 || !/[\p{L}\p{N}]/u.test(x)),
+    )
+    .map(
+      (t) =>
+        new RegExp(
+          "(?<![\\p{L}\\p{N}])" +
+            t
+              .map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+              .join("\\s+") +
+            "(?![\\p{L}\\p{N}])",
+          "u",
+        ),
+    );
+}
+export function brandMatches(text: string, b: Brand, values = aliases(b)) {
+  return (
+    matches(text, values) ||
+    [b.name, ...b.aliases].flatMap(derivedForms).some((r) => r.test(text))
+  );
+}
+const generic =
+  /^(?:pros|cons|pros and cons|price|prices|pricing|cost|costs|budget|support|customer support|uptime|reliability|performance|speed|security|scalability|ease of use|integrations?|reviews?|ratings?|location|features|key features|best for|ideal for|why|why it stands out|strengths|weaknesses|benefits|drawbacks|limitations|considerations|key considerations|use cases?|website|overview|summary|conclusion|final thoughts|bottom line|verdict|recommendations?|best options|next steps|how to choose)$/i;
+const slot =
+  /^(?:best|top|ideal|great|good|perfect)\s+(?:overall|picks?|choice|option|value|alternative|budget|free|paid|premium|for\s+\S)/i;
+const unmark = (s: string) =>
+  s.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\*+/g, "");
 export function fallbackEntities(text: string): Entity[] {
-  return text
-    .split("\n")
-    .flatMap((line) => {
-      const m = line.match(
-        /^\s*(?:#{1,6}\s+)?(?:\*\*)?(?:\d+[.)]|[-*])\s+(?:\*\*)?([^:\n—–]+?)(?:\*\*|:|\s[—–]\s|$)/,
-      );
-      if (!m) return [];
-      const name = m[1]
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-        .replace(/\*+/g, "")
-        .trim();
-      const generic =
-        /^(?:pros|cons|pricing|features|key features|summary|conclusion|recommendations?|best options|next steps|how to choose)$/i;
-      return name &&
-        name.length < 90 &&
-        name.split(/\s+/).length <= 8 &&
-        !generic.test(name) &&
-        !/[!?]/.test(name)
-        ? [
-            {
-              name,
-              position: 1,
-              snippet: line.trim(),
-              sentiment: "neutral" as const,
-            },
-          ]
-        : [];
-    })
-    .map((e, i) => ({ ...e, position: i + 1 }));
+  const all = text.split("\n").flatMap((line) => {
+    const m = line.match(
+      /^\s*(?:#{1,6}\s+)?(?:\*\*)?(\d+[.)]|[-*])\s+(?:\*\*)?([^:\n—–]+?)(\*\*|:|\s[—–]\s|$)/,
+    );
+    if (!m) return [];
+    const bullet = !/^\d/.test(m[1]),
+      rest = line.slice(m[0].length - m[3].length);
+    // a bullet counts only as "Name: description", not as a plain sentence
+    if (bullet && !/^(?:\*\*)?(?::|\s[—–]\s)/.test(rest)) return [];
+    let name = unmark(m[2]).trim();
+    // "- Best overall: Notion" / "1. Best overall: Notion" names its pick after the slot label
+    if (slot.test(name))
+      name =
+        /^\s*(?::|[—–])\s*([^(,;:\n—–]+?)(?:\.?\s*$|[(,;—–]|\.\s|\s-\s)/
+          .exec(unmark(rest))?.[1]
+          .trim() || "";
+    return name &&
+      name.length < 90 &&
+      name.split(/\s+/).length <= 8 &&
+      !generic.test(name) &&
+      !/[!?]/.test(name)
+      ? [{ name, bullet, snippet: line.trim() }]
+      : [];
+  });
+  // bullets are a fallback for answers with no numbered recommendations
+  const numbered = all.filter((e) => !e.bullet);
+  return (numbered.length ? numbered : all).map(({ name, snippet }, i) => ({
+    name,
+    position: i + 1,
+    snippet,
+    sentiment: "neutral" as const,
+  }));
 }
 export function verifiedEntities(text: string, items: Entity[]) {
   const seen = new Set<string>();
@@ -109,16 +150,22 @@ export function analyze(
       }
     })
     .map((c) => c.url);
-  const found = es.find((e) => matches(e.name, aa));
-  const isAmbiguous = ambiguous.has(normalize(brand.name));
+  const found = es.find((e) => brandMatches(e.name, brand, aa));
+  const weak = aa.filter((a) => ambiguous.has(a));
+  const strong = aa.filter((a) => !ambiguous.has(a));
+  const isAmbiguous = weak.length > 0;
   const mentioned =
-    matches(text, aa) && (!isAmbiguous || urls.length > 0 || !!found);
+    brandMatches(text, brand, strong) ||
+    (matches(text, weak) && (urls.length > 0 || !!found));
   const pos = mentioned ? (found?.position ?? null) : null;
   const sentiment = mentioned ? (found?.sentiment ?? "neutral") : "neutral";
   let snippet = mentioned ? found?.snippet || "" : "";
   if (mentioned && !snippet) {
     const lines = text.split(/(?<=[.!?])\s+|\n/);
-    snippet = lines.find((l) => matches(l, aa)) || "";
+    snippet =
+      lines.find((l) => brandMatches(l, brand, strong)) ||
+      lines.find((l) => brandMatches(l, brand, aa)) ||
+      "";
   }
   const score = !mentioned
     ? 0
@@ -140,7 +187,7 @@ export function analyze(
     citationUrls: urls,
     sentiment,
     snippet,
-    competitors: es.filter((e) => !matches(e.name, aa)),
+    competitors: es.filter((e) => !brandMatches(e.name, brand, aa)),
     score,
   };
 }

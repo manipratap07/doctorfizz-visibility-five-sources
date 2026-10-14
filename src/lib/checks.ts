@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
+import { brandSalt, hashBrandKey } from "./brand-key";
 import { pool, query } from "./db";
-import { aliases, matches } from "./analysis";
+import { brandMatches } from "./analysis";
 import { checkDeadlineSeconds, providers } from "./providers.config";
 import { providerQueue, deadlineQueue } from "./redis";
 import { allowance } from "./limits";
 import { z } from "zod";
 import type { Brand, Run, Check, BatchPrompt } from "./types";
+const brandKey = (brand: Brand) =>
+  hashBrandKey(
+    brand.domain || "brand:" + brand.name.toLowerCase(),
+    brandSalt(),
+  );
 export async function createCheck(
   visitorId: string,
   ip: string,
@@ -34,7 +40,8 @@ export async function createCheck(
     }
     const texts = z
       .array(z.string().trim().min(8).max(1000))
-      .length(5)
+      .min(2)
+      .max(5)
       .parse(data.prompts);
     const row = (
       await c.query(
@@ -48,7 +55,7 @@ export async function createCheck(
       index,
       text,
       bias:
-        matches(text, aliases(row.brand)) ||
+        brandMatches(text, row.brand) ||
         !!(
           row.brand.domain &&
           text.toLowerCase().includes(row.brand.domain.toLowerCase())
@@ -60,8 +67,8 @@ export async function createCheck(
     if (selected.some((p) => !p))
       throw new Error("Unknown or disabled provider.");
     const cost = 0;
-    if (!selected.length || selected.length > 5)
-      throw new Error("Select one to five browser providers.");
+    if (!selected.length || selected.length > 3)
+      throw new Error("Select one to three browser providers.");
     const [load] = (
       await c.query("SELECT count(*) n FROM checks WHERE status!='completed'")
     ).rows;
@@ -75,8 +82,7 @@ export async function createCheck(
         [
           visitorId,
           ip,
-          (row.brand as Brand).domain ||
-            "brand:" + (row.brand as Brand).name.toLowerCase(),
+          brandKey(row.brand as Brand),
           Number(process.env.WINDOW_DAYS || 30),
         ],
       )
@@ -133,8 +139,7 @@ export async function createCheck(
         visitorId,
         checkId,
         ip,
-        (row.brand as Brand).domain ||
-          "brand:" + (row.brand as Brand).name.toLowerCase(),
+        brandKey(row.brand as Brand),
         cost,
       ],
     );
@@ -159,7 +164,7 @@ export async function enqueue(id: string) {
     provider_id: string;
     repeat_index: number;
   }>(
-    "SELECT id,provider_id,repeat_index FROM llm_runs WHERE check_id=$1 AND status='queued' ORDER BY prompt_index,provider_id",
+    "SELECT id,provider_id,repeat_index FROM llm_runs WHERE check_id=$1 AND status IN ('queued','running') ORDER BY prompt_index,provider_id",
     [id],
   );
   for (const r of rows) {
@@ -173,7 +178,8 @@ export async function enqueue(id: string) {
           attempts: 1,
           backoff: { type: "exponential", delay: 1500 },
           removeOnComplete: 1000,
-          removeOnFail: 1000,
+          // A failed job must not block re-queueing its run under the same id.
+          removeOnFail: true,
         },
       );
     } finally {

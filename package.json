@@ -1,6 +1,6 @@
 {
   "name": "doctorfizz-llm-visibility",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "engines": {
     "node": "24.x"
   },
@@ -13,7 +13,7 @@
     "db:migrate": "tsx src/worker/migrate.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --incremental false",
     "adapters:health": "tsx src/worker/health.ts",
     "preflight": "tsx scripts/preflight.ts",
     "browser:probe": "tsx src/worker/probe.ts",

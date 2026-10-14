@@ -1,7 +1,7 @@
-import { chromium } from "@playwright/test";
 import { browserTargets } from "./browser.config";
 import { sessionBarrier, runBrowser } from "./browser-adapter";
 import { query, pool } from "../lib/db";
+import { launchContext, egressIp } from "./launch";
 async function main() {
   const submit = process.argv.includes("--submit");
   const requested = process.argv
@@ -9,7 +9,7 @@ async function main() {
     ?.split("=")[1];
   if (requested && !browserTargets[requested])
     throw new Error(
-      "Unknown provider. Use chatgpt, gemini, copilot, google-ai or duckai.",
+      "Unknown provider. Use chatgpt, gemini or google-ai.",
     );
   for (const [id, target] of Object.entries(browserTargets).filter(
     ([id]) => !requested || requested === id,
@@ -22,17 +22,18 @@ async function main() {
         prompt:
           "What are three project management tools for a small business? Explain your choices.",
         signal: AbortSignal.timeout(90000),
+        deadlineAt: Date.now() + 90000,
       });
       status = r.status === "ok" ? "ready" : r.status;
       reason = r.errorReason || "";
       evidence = r.browserEvidence;
     } else {
-      const browser = await chromium.launch({
-        headless: true,
-        executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined,
-      });
+      const context = await launchContext(id);
       try {
-        const page = await browser.newPage();
+        console.log(
+          JSON.stringify({ provider: id, egressIp: await egressIp(context).catch((e) => "unknown: " + e.message) }),
+        );
+        const page = context.pages()[0] ?? (await context.newPage());
         await page.goto(target.url, {
           waitUntil: "domcontentloaded",
           timeout: 20000,
@@ -62,7 +63,7 @@ async function main() {
       } catch (e) {
         reason = (e as Error).message.split("\n")[0];
       } finally {
-        await browser.close();
+        await context.close();
       }
     }
     console.log(JSON.stringify({ provider: id, status, reason, evidence }));

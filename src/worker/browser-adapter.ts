@@ -1,7 +1,33 @@
-import { chromium, type Page } from "@playwright/test";
+import type { BrowserContext, Page } from "@playwright/test";
 import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { ProviderResult, BrowserInput } from "../lib/types";
-import { browserTargets, browserConfig, type BrowserTarget } from "./browser.config";
+import { browserTargets, type BrowserTarget } from "./browser.config";
+import { launchContext } from "./launch";
+import { toCitations } from "./citations";
+
+export const CHALLENGE_REASON =
+  "The provider displayed a security verification page; no answer was collected.";
+
+export const SIGNIN_REASON =
+  "The provider requires sign-in before this session can continue.";
+
+export const CONSENT_REASON =
+  "The provider requires accepting its terms before it answers.";
+
+const CHALLENGE_HOST =
+  /(^|\.)(challenges\.cloudflare\.com|hcaptcha\.com|arkoselabs\.com|captcha-delivery\.com)$/i;
+function urlParts(raw: string) {
+  try {
+    const u = new URL(raw);
+    return { host: u.hostname, path: u.pathname };
+  } catch {
+    return { host: "", path: "" };
+  }
+}
+const isChallengePath = (raw: string) =>
+  /\/sorry\/|\/cdn-cgi\/challenge-platform\//i.test(urlParts(raw).path);
 
 const visible = async (page: Page, selector: string) =>
   page
@@ -11,46 +37,61 @@ const visible = async (page: Page, selector: string) =>
     .isVisible()
     .catch(() => false);
 
+const INTERFACE_TEXT = new Function(
+  "body",
+  "answerSelector",
+  String.raw`
+  const skip = 'script,style,noscript,[hidden],[aria-hidden="true"],model-response,user-query,[data-message-author-role],[data-message-role],[data-role="assistant"],[data-role="user"],[data-testid="assistant-message"],[data-testid="answer"],[data-testid="chat-message-assistant"],[data-content="ai-message"]';
+  const seen = new Map();
+  const shown = (el) => {
+    if (seen.has(el)) return seen.get(el);
+    let ok;
+    if (el.closest(skip) || (answerSelector && el.closest(answerSelector))) ok = false;
+    else if (typeof el.checkVisibility === "function")
+      ok = el.checkVisibility({ visibilityProperty: true });
+    else {
+      ok = true;
+      for (let e = el; e; e = e.parentElement) {
+        const st = getComputedStyle(e);
+        if (st.display === "none" || st.visibility === "hidden") { ok = false; break; }
+      }
+    }
+    seen.set(el, ok);
+    return ok;
+  };
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const parts = [];
+  while (walker.nextNode()) {
+    const parent = walker.currentNode.parentElement;
+    if (parent && shown(parent)) parts.push(walker.currentNode.textContent || "");
+  }
+  return parts.join(" ");
+`,
+) as (body: Element, answerSelector: string) => string;
+
 export async function sessionBarrier(
   page: Page,
   answerSelector?: string,
+  prompt?: string,
 ): Promise<{
   status: "blocked" | "rate_limited" | "error";
   reason: string;
 } | null> {
-  const text = await page
-    .locator("body")
-    .innerText()
-    .catch(() => "");
   // Only inspect interface text, excluding known assistant/user conversation roots.
-  const interfaceText = await page
+  // checkVisibility() replaces a getComputedStyle walk up every ancestor of every
+  // text node, which made each poll take seconds on large chat pages.
+  const rawInterfaceText = await page
     .locator("body")
-    .evaluate((body, answerSelector) => {
-      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-      const parts: string[] = [];
-      while (walker.nextNode()) {
-        const parent = walker.currentNode.parentElement;
-        if (
-          !parent ||
-          parent.closest(
-            'script,style,noscript,[hidden],[aria-hidden="true"],model-response,user-query,[data-message-author-role],[data-role="assistant"],[data-role="user"],[data-testid="assistant-message"],[data-testid="answer"],[data-testid="chat-message-assistant"],[data-content="ai-message"]',
-          ) ||
-          (answerSelector && parent.closest(answerSelector))
-        )
-          continue;
-        let isVisible = true;
-        for (let el: HTMLElement | null = parent; el; el = el.parentElement) {
-          const style = getComputedStyle(el);
-          if (style.display === "none" || style.visibility === "hidden") {
-            isVisible = false;
-            break;
-          }
-        }
-        if (isVisible) parts.push(walker.currentNode.textContent || "");
-      }
-      return parts.join(" ");
-    }, answerSelector)
-    .catch(() => text);
+    .evaluate(INTERFACE_TEXT, answerSelector || "")
+    .catch(() => page.locator("body").innerText().catch(() => ""));
+  // The user's own question is echoed on the page; words in it ("rate limit",
+  // "sign in to continue") must not read as a provider wall. Text nodes are
+  // joined with spaces, so collapse whitespace before matching phrases.
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+  const asked = prompt ? norm(prompt) : "";
+  const interfaceText = asked
+    ? norm(rawInterfaceText).split(asked).join(" ")
+    : norm(rawInterfaceText);
 
   if (
     /too many requests|rate limit reached|daily limit reached/i.test(
@@ -62,6 +103,25 @@ export async function sessionBarrier(
       reason: "The free browser session reached its limit.",
     };
 
+  // Challenge widgets live in cross-origin iframes, so body text never shows them.
+  // Only host and path are matched: a Google AI Mode URL carries the user's
+  // question in ?q=, which may itself name a CAPTCHA vendor's domain.
+  const url = page.url();
+  const challengeFrame = page.frames().some((f) => {
+    const { host, path } = urlParts(f.url());
+    return CHALLENGE_HOST.test(host) || /\/recaptcha\//i.test(path);
+  });
+  if (challengeFrame || isChallengePath(url))
+    return {
+      status: "blocked",
+      reason: CHALLENGE_REASON,
+    };
+  if (/^https:\/\/consent\.(google|youtube)\.com\//i.test(url))
+    return {
+      status: "blocked",
+      reason: "The provider requires consent in a blocking dialog.",
+    };
+
   const title = await page.title().catch(() => "");
   if (
     /^just a moment\s*[.!…]*$/i.test(title.trim()) ||
@@ -71,14 +131,23 @@ export async function sessionBarrier(
   )
     return {
       status: "blocked",
-      reason:
-        "The provider displayed a security verification page; no answer was collected.",
+      reason: CHALLENGE_REASON,
     };
 
+  // Generic phrases only count inside alert/status regions; page-wide matching
+  // also hit stale toasts and hidden templates.
+  const alerts = (
+    await page
+      .locator('[role="alert"],[role="alertdialog"],[role="status"],[aria-live="assertive"]')
+      .filter({ visible: true })
+      .allTextContents()
+      .catch(() => [] as string[])
+  ).join(" ");
   if (
-    /duck\.ai is temporarily unavailable|something went wrong|unable to generate a response|service (?:is )?temporarily unavailable/i.test(
+    /service (?:is )?temporarily unavailable/i.test(
       interfaceText,
-    )
+    ) ||
+    /something went wrong|unable to generate a response/i.test(alerts)
   )
     return {
       status: "error",
@@ -86,12 +155,21 @@ export async function sessionBarrier(
         "The provider displayed a service error; no answer was collected.",
     };
 
+  // Inline terms card ("By clicking 'Continue' you agree to our Privacy Policy
+  // and Terms of Service" + a Continue button) that holds the answer back.
+  if (
+    /by clicking ['"\u2018\u2019]?continue['"\u2018\u2019]?,? you agree/i.test(interfaceText) &&
+    (await visible(page, 'button:has-text("Continue")'))
+  )
+    return { status: "blocked", reason: CONSENT_REASON };
+
   // A standard footer such as 'By clicking Ask you agree...' is not a wall.
   // Keep explicit consent dialogs separate; never automatically accept them.
   const dialogs = await page
     .locator('[role="dialog"],dialog[open],[aria-modal="true"]')
     .filter({ visible: true })
-    .allTextContents();
+    .allTextContents()
+    .catch(() => [] as string[]);
 
   if (
     dialogs.some(
@@ -104,62 +182,54 @@ export async function sessionBarrier(
     };
 
   if (
-    /sign in to continue|log in to continue|sign into copilot|sign in to use (?:gemini|copilot|chatgpt)|log in to use (?:gemini|copilot|chatgpt)/i.test(
+    /sign in to continue|log in to continue|sign in to use (?:gemini|chatgpt)|log in to use (?:gemini|chatgpt)/i.test(
       interfaceText,
     )
   )
     return {
       status: "blocked",
-      reason: "The provider requires sign-in before this session can continue.",
+      reason: SIGNIN_REASON,
     };
 
   return null;
 }
 
+// Runs inside the page. Kept as plain JavaScript source on purpose: tsx/esbuild
+// compiles TypeScript with keepNames, which wraps named inner functions in a
+// `__name(...)` helper that does not exist in the browser, so a TS callback
+// here threw "ReferenceError: __name is not defined" and every answer read as "".
+// new Function keeps the source verbatim; Playwright serialises it via toString().
+const READ_VISIBLE_ANSWER = new Function(
+  "root",
+  String.raw`
+  const blocks = new Set(["P","DIV","LI","H1","H2","H3","H4","PRE","UL","OL","BLOCKQUOTE"]);
+  const walk = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
+    if (!(node instanceof HTMLElement)) return "";
+    if (node.matches('button,input,textarea,script,style,nav,[role="toolbar"],[aria-hidden="true"],[data-artifact-type="map"],[role="region"][aria-label*="map" i]')) return "";
+    const style = getComputedStyle(node);
+    if (style.display === "none" || style.visibility === "hidden") return "";
+    if (node.tagName === "BR") return "\n";
+    let text = Array.from(node.childNodes).map(walk).join("");
+    if (node.tagName === "LI" && node.parentElement && node.parentElement.tagName === "OL") {
+      const siblings = Array.from(node.parentElement.children).filter((n) => n.tagName === "LI");
+      const start = Number(node.parentElement.getAttribute("start") || 1);
+      text = (Number(node.getAttribute("value")) || start + siblings.indexOf(node)) + ". " + text.trim();
+    } else if (node.tagName === "LI" && node.parentElement && node.parentElement.tagName === "UL" && !node.parentElement.closest("li")) {
+      // Top-level bullets keep a marker so list items can be recognised as entities.
+      text = "- " + text.trim();
+    }
+    return blocks.has(node.tagName) ? "\n" + text + "\n" : text;
+  };
+  return walk(root).replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+`,
+) as (root: Element) => string;
+
 export async function readVisibleAnswer(
   answer: import("@playwright/test").Locator,
-) {
-  return answer.evaluate((root) => {
-    const blocks = new Set([
-      "P",
-      "DIV",
-      "LI",
-      "H1",
-      "H2",
-      "H3",
-      "H4",
-      "PRE",
-      "UL",
-      "OL",
-      "BLOCKQUOTE",
-    ]);
-    const walk = (node: Node): string => {
-      if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
-      if (!(node instanceof HTMLElement)) return "";
-      if (
-        node.matches(
-          'button,input,textarea,script,style,nav,[role="toolbar"],[aria-hidden="true"]',
-        )
-      )
-        return "";
-      const style = getComputedStyle(node);
-      if (style.display === "none" || style.visibility === "hidden") return "";
-      if (node.tagName === "BR") return "\n";
-      let text = Array.from(node.childNodes).map(walk).join("");
-      if (node.tagName === "LI" && node.parentElement?.tagName === "OL") {
-        const siblings = Array.from(node.parentElement.children).filter(
-          (n) => n.tagName === "LI",
-        );
-        const start = Number(node.parentElement.getAttribute("start") || 1);
-        text = `${Number(node.getAttribute("value")) || start + siblings.indexOf(node)}. ${text.trim()}`;
-      }
-      return blocks.has(node.tagName) ? "\n" + text + "\n" : text;
-    };
-    return walk(root)
-      .replace(/\n[ \t]+/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  });
+  timeout = 3000,
+): Promise<string> {
+  return answer.evaluate(READ_VISIBLE_ANSWER, undefined, { timeout });
 }
 
 export async function collectOnPage(
@@ -191,52 +261,57 @@ export async function collectOnPage(
       timeout: 20000,
     });
 
-    let barrier = await sessionBarrier(page, target.answer);
+    let barrier = await sessionBarrier(page, target.answer, input.prompt);
+    // Cloudflare's interstitial often passes on its own in a real browser and
+    // reloads into the app; give it a moment before reporting a block. Google's
+    // /sorry/ page is a CAPTCHA wall that never clears, so it is not waited on.
+    // Challenges are never solved, only waited out.
+    const graceUntil = Math.min(
+      Date.now() + 15000,
+      (input.deadlineAt ?? Infinity) - 30000,
+    );
+    while (
+      barrier?.reason === CHALLENGE_REASON &&
+      !/\/sorry\//i.test(urlParts(page.url()).path) &&
+      Date.now() < graceUntil &&
+      !input.signal.aborted
+    ) {
+      await page.waitForTimeout(1000);
+      barrier = await sessionBarrier(page, target.answer, input.prompt);
+    }
     if (barrier) return failure(barrier.status, barrier.reason);
 
-    let before = await page
+    const before = await page
       .locator(target.answer)
       .filter({ visible: true })
       .count();
 
-    if (!target.queryUrl) {
-      const box = page.locator(target.input).filter({ visible: true }).first();
-      await box.waitFor({ state: "visible", timeout: 12000 }).catch(() => {});
-      barrier = await sessionBarrier(page, target.answer);
-      if (barrier) return failure(barrier.status, barrier.reason);
-      if (!(await box.isVisible()) || !(await box.isEditable()))
-        return failure(
-          "blocked",
-          "No usable public chat input found. Inspect the live page for a sign-in requirement or changed selectors.",
-        );
-
-      await input.onProgress?.(
-        "submitting",
-        "Sending your question.",
-        page.url(),
+    const box = page.locator(target.input).filter({ visible: true }).first();
+    await box.waitFor({ state: "visible", timeout: 12000 }).catch(() => {});
+    barrier = await sessionBarrier(page, target.answer, input.prompt);
+    if (barrier) return failure(barrier.status, barrier.reason);
+    if (!(await box.isVisible()) || !(await box.isEditable()))
+      return failure(
+        "blocked",
+        "No usable public chat input found. Inspect the live page for a sign-in requirement or changed selectors.",
       );
-      await box.fill(input.prompt);
 
-      const send = target.submit
-        ? page.locator(target.submit).filter({ visible: true }).first()
-        : undefined;
-      if (send && (await send.isEnabled().catch(() => false)))
-        await send.click();
-      else await box.press("Enter");
-    } else {
-      const url = new URL(target.queryUrl);
-      url.searchParams.set("q", input.prompt);
-      await input.onProgress?.(
-        "submitting",
-        "Opening your question in Google AI Mode.",
-        target.url,
-      );
-      before = 0;
-      await page.goto(url.href, {
-        waitUntil: "domcontentloaded",
-        timeout: 20000,
-      });
-    }
+    await input.onProgress?.(
+      "submitting",
+      "Sending your question.",
+      page.url(),
+    );
+    await box.fill(input.prompt);
+
+    const send = target.submit
+      ? page.locator(target.submit).filter({ visible: true }).first()
+      : undefined;
+    // fill() focused the box. Keyboard Enter avoids locator.press re-resolving
+    // a composer that the page swaps out the moment the message is sent,
+    // which threw after the question had already gone out.
+    if (send && (await send.isEnabled({ timeout: 1500 }).catch(() => false)))
+      await send.click({ timeout: 3000 }).catch(() => page.keyboard.press("Enter"));
+    else await page.keyboard.press("Enter");
 
     await input.onProgress?.(
       "waiting",
@@ -250,8 +325,9 @@ export async function collectOnPage(
       sawGenerating = false,
       searchObserved = false;
 
-    while (!input.signal.aborted) {
-      barrier = await sessionBarrier(page, target.answer);
+    const softDeadline = (input.deadlineAt ?? Infinity) - 2500;
+    while (!input.signal.aborted && Date.now() < softDeadline) {
+      barrier = await sessionBarrier(page, target.answer, input.prompt);
       if (barrier) return failure(barrier.status, barrier.reason);
 
       searchObserved ||=
@@ -264,8 +340,12 @@ export async function collectOnPage(
         ? answer.locator(target.answerText).filter({ visible: true }).first()
         : answer;
 
+      // Never let one poll block on a text root that has not rendered yet.
       const text =
-        count > before ? await readVisibleAnswer(contents).catch(() => "") : "";
+        count > before &&
+        (!target.answerText || (await contents.count().catch(() => 0)) > 0)
+          ? await readVisibleAnswer(contents).catch(() => "")
+          : "";
 
       if (text && !receivingReported) {
         receivingReported = true;
@@ -301,6 +381,21 @@ export async function collectOnPage(
 
       stable = text && text === previous && !generating ? stable + 1 : 0;
       previous = text;
+      if (process.env.BROWSER_DEBUG)
+        console.error(
+          JSON.stringify({
+            debug: "browser_poll",
+            t: Date.now() - start,
+            count,
+            before,
+            textLen: text.length,
+            generating,
+            sawGenerating,
+            complete,
+            stable,
+            url: page.url().slice(0, 120),
+          }),
+        );
 
       if (
         text.trim().length >= 20 &&
@@ -319,7 +414,11 @@ export async function collectOnPage(
             .filter(
               (n) =>
                 (n as HTMLElement).getClientRects().length > 0 &&
-                getComputedStyle(n).visibility !== "hidden",
+                getComputedStyle(n).visibility !== "hidden" &&
+                // Map widgets carry tile/attribution links (Mapbox, OSM), not sources.
+                !n.closest(
+                  '[data-artifact-type="map"],[role="region"][aria-label*="map" i]',
+                ),
             )
             .map((n) => ({
               url: (n as HTMLAnchorElement).href,
@@ -327,31 +426,14 @@ export async function collectOnPage(
             })),
         );
 
-        const seen = new Set<string>();
-        const citations = links.flatMap((link) => {
-          try {
-            const u = new URL(link.url);
-            if (
-              !["https:", "http:"].includes(u.protocol) ||
-              u.username ||
-              u.password ||
-              u.hostname === new URL(target.url).hostname ||
-              seen.has(u.href)
-            )
-              return [];
-            seen.add(u.href);
-            return [{ url: u.href, title: link.title, domain: u.hostname }];
-          } catch {
-            return [];
-          }
-        });
+        const citations = toCitations(links, target.url, target.ownDomains);
 
         const model = target.model
           ? await page
               .locator(target.model)
               .filter({ visible: true })
               .first()
-              .innerText()
+              .innerText({ timeout: 1500 })
               .catch(() => "")
           : "";
 
@@ -364,7 +446,7 @@ export async function collectOnPage(
           latencyMs: Date.now() - start,
           browserEvidence: {
             captureMethod: "visible_dom",
-            adapterVersion: "browser-1.5",
+            adapterVersion: "browser-1.6",
             pageUrl: page.url(),
             capturedAt: new Date().toISOString(),
             answerHash: createHash("sha256").update(text).digest("hex"),
@@ -394,6 +476,62 @@ export async function collectOnPage(
   }
 }
 
+// Operator-only failure evidence (same internal-debug folder as browser:inspect).
+async function saveDebugSnapshot(page: Page, id: string) {
+  const directory = join("internal-debug", `${id}-run-${Date.now()}`);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeFile(join(directory, "page.html"), await page.content(), {
+    mode: 0o600,
+  });
+  await page.screenshot({ path: join(directory, "page.png") });
+  console.error(JSON.stringify({ debug: "browser_snapshot", directory }));
+}
+
+// Walls tied to the anonymous device or exit IP, which a new identity can clear.
+const needsFreshIdentity = (r: ProviderResult) =>
+  r.errorReason === CHALLENGE_REASON ||
+  r.errorReason === SIGNIN_REASON ||
+  r.status === "rate_limited";
+
+async function runOnce(
+  id: string,
+  target: BrowserTarget,
+  input: BrowserInput,
+): Promise<ProviderResult> {
+  let context: BrowserContext | undefined;
+  try {
+    input.signal.throwIfAborted();
+    context = await launchContext(id);
+  } catch (e) {
+    return {
+      status: input.signal.aborted ? "timeout" : "error",
+      errorReason:
+        "Browser could not start. " +
+        (e instanceof Error
+          ? e.message.split("\n")[0].slice(0, 200)
+          : "Unknown launch error"),
+      webSearchUsed: false,
+      latencyMs: 0,
+    };
+  }
+  // One shared close promise: after an abort, the finally block must wait for
+  // the same shutdown instead of returning while Chrome is still exiting.
+  let closing: Promise<void> | undefined;
+  const close = () => (closing ??= context!.close().catch(() => {}));
+  const abort = () => void close();
+  input.signal.addEventListener("abort", abort, { once: true });
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    const result = await collectOnPage(page, target, input);
+    if (result.status !== "ok" && process.env.BROWSER_DEBUG)
+      await saveDebugSnapshot(page, id).catch(() => {});
+    return result;
+  } finally {
+    input.signal.removeEventListener("abort", abort);
+    await close();
+  }
+}
+
 export async function runBrowser(
   id: string,
   input: BrowserInput,
@@ -407,55 +545,24 @@ export async function runBrowser(
       latencyMs: 0,
     };
 
-  let browser;
-  try {
-    input.signal.throwIfAborted();
-    browser = await chromium.launch({
-      headless: browserConfig.headless,
-      timeout: 15000,
-      executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined,
-      args: browserConfig.args,
-    });
-
-    const context = await browser.newContext({
-      locale: "en-US",
-      viewport: browserConfig.viewport,
-      userAgent: browserConfig.userAgent,
-      proxy: process.env.RESIDENTIAL_PROXY_URL ? { server: process.env.RESIDENTIAL_PROXY_URL } : undefined,
-    });
-
-    // Stealth anti-bot script injection to bypass headless detection
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => false,
-      });
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
-      });
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en'],
-      });
-    });
-
-    const page = await context.newPage();
-    const abort = () => {
-      void browser!.close().catch(() => {});
-    };
-    input.signal.addEventListener("abort", abort, { once: true });
-    try {
-      return await collectOnPage(page, target, input);
-    } finally {
-      input.signal.removeEventListener("abort", abort);
-    }
-  } catch {
-    return {
-      status: input.signal.aborted ? "timeout" : "error",
-      errorReason:
-        "Browser could not start. Check the worker image and browser installation.",
-      webSearchUsed: false,
-      latencyMs: 0,
-    };
-  } finally {
-    await browser?.close().catch(() => {});
+  const retries = Number(process.env.BROWSER_BLOCK_RETRIES ?? 1);
+  let result = await runOnce(id, target, input);
+  for (
+    let attempt = 0;
+    attempt < retries &&
+    needsFreshIdentity(result) &&
+    !input.signal.aborted &&
+    (input.deadlineAt ?? Infinity) - Date.now() > 45000;
+    attempt++
+  ) {
+    // Each run already uses a throwaway profile; a retry also gets a new
+    // sticky proxy session, i.e. a new exit IP and a new anonymous device.
+    await input.onProgress?.(
+      "opening",
+      "The source blocked this session; retrying with a fresh browser identity.",
+      target.url,
+    );
+    result = await runOnce(id, target, input);
   }
+  return result;
 }

@@ -1,4 +1,4 @@
-# v1.5 note
+# v1.6 note
 
 For the new flat-root ZIP and a new GitHub/Vercel project, follow ../START_HERE.md. The older staging paths below belong to the v1.4 ZIP with a nested project folder. Do not reuse its archive upload path for this release.
 
@@ -46,6 +46,15 @@ cat /root/doctorfizz-browser-v14/doctorfizz-visibility/deploy/upgrade-vps.sh
 
 Expected: the script text. It backs up this app and its PostgreSQL database, preserves `.env` secrets and volumes, keeps port 8089, builds the new images and upgrades only this Compose project.
 
+Before running it, add the residential proxy to the existing `.env` (the script keeps values that are already set, and the worker only reads `.env` when its container is created):
+
+```text
+RESIDENTIAL_PROXY_URL=http://USER-session-{session}:PASS@GATEWAY:PORT
+REQUIRE_PROXY=true
+```
+
+Keep the literal `{session}` where your provider expects a sticky-session id. If you add the proxy later instead, run `docker compose -p doctorfizz-llm up -d --no-deps worker` afterwards; a plain restart does not reload `.env`.
+
 Run:
 
 ```bash
@@ -60,6 +69,7 @@ Expected, in order:
 - `migrate` finishes with `Schema ready.` (may appear in service logs rather than the detached startup output).
 - PostgreSQL and Redis remain healthy; web/worker start. Web maps `127.0.0.1:8089->3000/tcp`.
 - `Browser upgrade started. Next run the health check...`
+- `docker compose -p doctorfizz-llm logs worker | grep browser_egress` shows `"proxy":true` and an `egressIp` that is not 187.127.186.47.
 
 The script stops if backup/config/build fails. It does not run `docker compose down`, `docker system prune`, remove volumes, edit Caddy or affect `seo-analyzer-vps`/your port-3000 rank worker. Running DoctorFizz checks should finish before you upgrade its worker.
 
@@ -101,19 +111,19 @@ Then perform the actual acceptance test:
 docker compose -p doctorfizz-llm exec -T worker npm run browser:probe -- --submit
 ```
 
-This submits one non-sensitive sample question per candidate website, sequentially, and may take up to six minutes.
+This submits one non-sensitive sample question per source (ChatGPT, Gemini, Google AI Mode), sequentially, and may take up to five minutes. First check the worker log for `"event":"browser_egress"`: the `egressIp` must be a residential proxy address, not the VPS IP.
 
 A passing provider must report:
 
 ```text
-{"provider":"copilot","status":"ready","reason":"","evidence":{"captureMethod":"visible_dom",...}}
+{"provider":"chatgpt","status":"ready","reason":"","evidence":{"captureMethod":"visible_dom",...}}
 ```
 
 The provider ID varies. Evidence must include the real page URL, capture time and answer hash. `blocked`, `rate_limited`, `timeout` or `error` is **not** a pass. The command returns a nonzero exit code if any provider fails. It does not create a successful result from missing browser data.
 
 If a site has a login/consent/verification wall, the credential-free workflow cannot use that session automatically. If only the site's HTML selectors changed, update `src/worker/browser.config.ts` after inspecting the real UI, rebuild `worker` and repeat the test. Do not treat this as a request for an API key.
 
-To disable failed candidates, edit only `BROWSER_DISABLED_PROVIDERS` in `.env`, using comma-separated IDs (`chatgpt`, `gemini`, `copilot`, `google-ai`, `duckai`), then recreate this app's web/worker:
+To disable failed candidates, edit only `BROWSER_DISABLED_PROVIDERS` in `.env`, using comma-separated IDs (`chatgpt`, `gemini`, `google-ai`), then recreate this app's web/worker:
 
 ```bash
 nano .env
@@ -155,18 +165,18 @@ Expected: an upload/build log and a production deployment URL. Wait for `Ready`.
 
 1. Refresh the production URL.
 2. Enter `itzfizz.com` or the business name `itzfizz` and prepare the profile.
-3. Confirm exactly five blank question fields, with no suggested questions or radio cards.
-4. Write five questions of your own (8–1,000 characters each). One can explicitly name `itzfizz` to check the direct-brand-query label.
-5. Select the sources that passed the VPS probe and click **Run my five questions**.
-6. Follow each question/source stage in **Live collection**. Five selected sources create 25 runs. The finished count must reflect actual completed/failed runs.
+3. Confirm five blank question fields (questions 3–5 marked optional), with no suggested questions or radio cards.
+4. Write two to five questions of your own (8–1,000 characters each); the run button stays disabled until at least two are filled. One can explicitly name `itzfizz` to check the direct-brand-query label.
+5. Select the sources that passed the VPS probe and click **Run my questions**.
+6. Follow each question/source stage in **Live collection**. Three selected sources create 15 runs. The finished count must reflect actual completed/failed runs.
 7. Open answers as they finish, while other browser runs remain pending. Use the question tabs to check that answers belong to the right question.
 8. Check real captured text, citations (when present), source URL, timestamp and hash. A blocked or failed source must show its reason and have no invented answer.
 9. Export CSV: each row includes question number, question text, source, actual answer and evidence.
 10. Repeat at phone and desktop widths. Fields, progress cards, tabs and the response drawer must fit the screen.
 
-One batch consumes one check. Browser work runs sequentially to limit memory use alongside your existing tools. Each attempt has 90 seconds; the 25-run batch deadline is 39 minutes 30 seconds. This is a maximum, not an estimated completion time. Leaving the results page does not cancel queued work; keep the public result link to return to it.
+One batch consumes one check. Browser work runs sequentially to limit memory use alongside your existing tools. Each attempt has 90 seconds; the 15-run batch deadline is 24 minutes 30 seconds. This is a maximum, not an estimated completion time. Leaving the results page does not cancel queued work; keep the public result link to return to it.
 
-A success requires actual provider answers, not merely a `Ready` Vercel deployment or a `200` backend health check. Search use is marked confirmed only when the browser exposes a corresponding observed indicator. Duck.ai is not assumed to search the web.
+A success requires actual provider answers, not merely a `Ready` Vercel deployment or a `200` backend health check. Search use is marked confirmed only when the browser exposes a corresponding observed indicator.
 
 ## Restore only DoctorFizz if necessary
 

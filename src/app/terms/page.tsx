@@ -11,9 +11,9 @@ export default function Terms() {
       </p>
       <h2>Use and limits</h2>
       <p>
-        Write your own five questions to check websites and brands you are
+        Write two to five questions of your own to check websites and brands you are
         authorised to analyse. Do not submit sensitive data or use the service
-        to bypass provider safeguards. One batch of five questions across
+        to bypass provider safeguards. One batch of two to five questions across
         selected providers is one check. Five checks are available per 30-day
         visitor window, subject to daily and worker capacity limits.
       </p>

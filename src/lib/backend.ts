@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import { query } from "./db";
-import { getPublicProviders } from "./providers.config";
+import { BACKEND_CONTRACT, getPublicProviders } from "./providers.config";
 
 function backend() {
   if (!process.env.BACKEND_URL) return null;
@@ -95,36 +95,63 @@ export async function relay(req: Request): Promise<Response | null> {
 export async function getToolConfig() {
   const target = backend();
   if (target) {
-    target.pathname = "/api/config";
-    const r = await fetch(target, {
-      headers: {
-        "x-doctorfizz-backend-key": process.env.BACKEND_SHARED_SECRET!,
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(8000),
-      redirect: "error",
-    });
-    if (!r.ok)
-      throw new Error("The check service configuration is unavailable.");
-    const remote = (await r.json()) as {
-      providers: ReturnType<typeof getPublicProviders>;
-      turnstileKey: string;
-    };
-    return {
-      providers: getPublicProviders().map((p) => {
-        const upstream = remote.providers.find((h) => h.id === p.id);
-        return upstream
-          ? { ...p, ...upstream, displayName: p.displayName }
-          : {
-              ...p,
-              enabled: false,
-              configured: false,
-              readiness: "backend_update_required",
-              reason: "Update the VPS to v1.5 before testing this source.",
-            };
-      }),
-      turnstileKey: remote.turnstileKey,
-    };
+    try {
+      target.pathname = "/api/config";
+      const r = await fetch(target, {
+        headers: {
+          "x-doctorfizz-backend-key": process.env.BACKEND_SHARED_SECRET!,
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+        redirect: "error",
+      });
+      if (!r.ok)
+        throw new Error("The check service configuration is unavailable.");
+      const remote = (await r.json()) as {
+        providers: ReturnType<typeof getPublicProviders>;
+        turnstileKey: string;
+        contract?: number;
+      };
+      if (!Array.isArray(remote?.providers))
+        throw new Error("The check service configuration is malformed.");
+      // An older VPS still lists these source ids but rejects this frontend's
+      // batches, so a contract mismatch disables every source.
+      const stale = remote.contract !== BACKEND_CONTRACT;
+      return {
+        providers: getPublicProviders().map((p) => {
+          const upstream = stale
+            ? undefined
+            : remote.providers.find((h) => h.id === p.id);
+          return upstream
+            ? { ...p, ...upstream, displayName: p.displayName }
+            : {
+                ...p,
+                enabled: false,
+                configured: false,
+                readiness: "backend_update_required",
+                reason: "Update the VPS to v1.6 before testing this source.",
+              };
+        }),
+        turnstileKey: remote.turnstileKey,
+      };
+    } catch (e) {
+      console.error(
+        JSON.stringify({
+          event: "backend_config_failed",
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+      return {
+        providers: getPublicProviders().map((p) => ({
+          ...p,
+          enabled: false,
+          readiness: "backend_unavailable",
+          reason:
+            "The check service is temporarily unavailable. Please try again shortly.",
+        })),
+        turnstileKey: "",
+      };
+    }
   }
   const publicList = getPublicProviders();
   try {
@@ -150,6 +177,7 @@ export async function getToolConfig() {
   }
   return {
     providers: publicList,
+    contract: BACKEND_CONTRACT,
     turnstileKey:
       process.env.TURNSTILE_REQUIRED === "true"
         ? process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ||

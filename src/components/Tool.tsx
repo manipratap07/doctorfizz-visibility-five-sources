@@ -22,7 +22,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import type { Brand, SiteProfile, Check, Run } from "@/lib/types";
-import { summarize } from "@/lib/analysis";
+import { summarize, brandMatches } from "@/lib/analysis";
 import { weights } from "@/lib/scoring.config";
 type Provider = {
   id: string;
@@ -55,15 +55,15 @@ declare global {
 const faq = [
   [
     "What does this check measure?",
-    "It sends your five questions to the selected chatbot websites in fresh browser sessions and collects their visible answers, recommendations and citations.",
+    "It sends your two to five questions to the selected chatbot websites in fresh browser sessions and collects their visible answers, recommendations and citations.",
   ],
   [
     "Is this the same as using each consumer AI app?",
     "These are public, logged-out browser snapshots. Free access can change or require login. The tool captures only completed answers; it reports blocked sessions separately.",
   ],
   [
-    "Can I write any five questions?",
-    "Yes. Write your own five questions, with 8 to 1,000 characters each. Questions naming your brand are labelled direct brand queries.",
+    "Can I write my own questions?",
+    "Yes. Write two to five questions of your own, with 8 to 1,000 characters each. Questions naming your brand are labelled direct brand queries.",
   ],
   [
     "What happens if a provider fails?",
@@ -97,7 +97,11 @@ async function api(path: string, data?: unknown) {
       `The service returned an unreadable response (HTTP ${r.status}). Please try again shortly.`,
     );
   }
-  if (!r.ok) throw new Error(j.error || "Request could not be completed.");
+  if (!r.ok)
+    throw Object.assign(
+      new Error(j.error || "Request could not be completed."),
+      { status: r.status },
+    );
   return j;
 }
 const short = (p: Provider) => p.displayName.split(" · ")[0];
@@ -169,6 +173,9 @@ export default function Tool({
     [profileId, setProfileId] = useState(""),
     [brand, setBrand] = useState<Brand | null>(null),
     [promptTexts, setPromptTexts] = useState<string[]>(Array(5).fill(""));
+  // Two to five questions; empty boxes are simply not sent.
+  const filled = promptTexts.map((text) => text.trim()).filter(Boolean),
+    promptsReady = filled.length >= 2 && filled.every((t) => t.length >= 8);
   const [resultPrompt, setResultPrompt] = useState(0);
   const [chosen, setChosen] = useState(
       providers
@@ -244,11 +251,26 @@ export default function Tool({
         setBusy("");
       }
     };
+    let pollErr = "";
     const refresh = async () => {
       try {
-        update(await api("/api/checks/" + watchId));
+        const c = await api("/api/checks/" + watchId);
+        if (cancelled) return;
+        update(c);
+        if (pollErr) {
+          const stale = pollErr;
+          pollErr = "";
+          setError((cur) => (cur === stale ? "" : cur));
+        }
       } catch (e) {
-        if (!cancelled) setError((e as Error).message);
+        if (cancelled) return;
+        pollErr = (e as Error).message;
+        setError(pollErr);
+        if ((e as { status?: number }).status === 404) {
+          finished = true;
+          setBusy("");
+          window.history.replaceState({}, "", "/");
+        }
       }
       if (!cancelled && !finished) poll = setTimeout(refresh, 2500);
     };
@@ -356,29 +378,33 @@ export default function Tool({
     }
   }
   async function run() {
-    setBusy("Preparing your five-question batch");
+    setBusy("Preparing your question batch");
     setError("");
     try {
       requestKey.current ||= crypto.randomUUID();
-      if (promptTexts.some((text) => text.trim().length < 8))
+      if (!promptsReady)
         throw new Error(
-          "Enter all five questions, with at least 8 characters each.",
+          "Enter at least two questions, with at least 8 characters each. Leave unused boxes empty.",
         );
       const j = await api("/api/checks", {
         profileId,
-        prompts: promptTexts.map((text) => text.trim()),
+        prompts: filled,
         providers: chosen,
         turnstileToken: token,
         idempotencyKey: requestKey.current,
       });
       track("check_started");
       setLeft(j.attemptsLeft);
-      setWatchId(j.checkId);
-      setCheck(await api("/api/checks/" + j.checkId));
-      window.history.replaceState({}, "", "/?check=" + j.checkId);
       requestKey.current = "";
+      window.history.replaceState({}, "", "/?check=" + j.checkId);
       window.turnstile?.reset();
       setToken("");
+      setWatchId(j.checkId);
+      try {
+        setCheck(await api("/api/checks/" + j.checkId));
+      } catch {
+        /* The polling effect retries. */
+      }
       setTimeout(() => scrollTo(resultsRef.current), 100);
     } catch (e) {
       setError((e as Error).message);
@@ -465,7 +491,7 @@ export default function Tool({
               </p>
               <Stack first="WHERE DOES" last="AI SEE YOU?" level={1} />
               <p className="hero-description" data-deck>
-                One brand. Five questions from you. See which AI providers name
+                One brand. Two to five questions from you. See which AI providers name
                 you, which competitors they recommend and the evidence behind
                 every answer.
               </p>
@@ -596,7 +622,7 @@ export default function Tool({
               READING YOUR WEBSITE
             </div>
             <p className="secondary">
-              Preparing your business profile for your five questions.
+              Preparing your business profile for your questions.
             </p>
             <div className="skeleton-row">
               <i />
@@ -617,7 +643,7 @@ export default function Tool({
           <section className="wrap workspace" ref={promptRef}>
             <div className="section-top">
               <div>
-                <div className="kicker">02 / WRITE YOUR FIVE QUESTIONS</div>
+                <div className="kicker">02 / WRITE 2–5 QUESTIONS</div>
                 <h2>
                   Your questions.
                   <br />
@@ -625,7 +651,7 @@ export default function Tool({
                 </h2>
               </div>
               <p className="secondary">
-                Enter five questions in your own words.
+                Enter two to five questions in your own words.
                 <br />
                 Each one runs across the sources you select below.
               </p>
@@ -638,7 +664,10 @@ export default function Tool({
                   htmlFor={`batch-prompt-${index}`}
                 >
                   <span className="batch-field-head">
-                    <b>Question {index + 1}</b>
+                    <b>
+                      Question {index + 1}
+                      {index >= 2 ? " · optional" : ""}
+                    </b>
                     <small>{text.length}/1,000</small>
                   </span>
                   <textarea
@@ -665,7 +694,12 @@ export default function Tool({
                   >
                     {text.trim().length > 0 && text.trim().length < 8
                       ? "Add a little more detail: at least 8 characters."
-                      : "Your words are sent to each selected source."}
+                      : brand &&
+                          (/\b(we|our|ours)\b/i.test(text) ||
+                            /\b[Uu]s\b/.test(text)) &&
+                          !brandMatches(text, brand)
+                        ? `The AI source cannot tell who "we" is. Name ${brand.name || "your brand"} or ask a neutral question like "best IT companies in Bengaluru".`
+                        : "Your words are sent to each selected source."}
                   </span>
                 </label>
               ))}
@@ -761,7 +795,8 @@ export default function Tool({
                     : `${left} of 5 free checks left`}
                 </b>
                 <p className="secondary">
-                  Five questions × {chosen.length} sources = {5 * chosen.length}{" "}
+                  {filled.length} question{filled.length === 1 ? "" : "s"} ×{" "}
+                  {chosen.length} sources = {filled.length * chosen.length}{" "}
                   browser runs. One batch uses one free check.
                 </p>
               </div>
@@ -775,7 +810,7 @@ export default function Tool({
                     active ||
                     !!busy ||
                     !chosen.length ||
-                    promptTexts.some((text) => text.trim().length < 8) ||
+                    !promptsReady ||
                     left === 0 ||
                     (!!turnstileKey && !token)
                   }
@@ -788,7 +823,7 @@ export default function Tool({
                     </>
                   ) : (
                     <>
-                      Run my five questions
+                      Run my questions
                       <ArrowRight size={17} />
                     </>
                   )}
@@ -1210,8 +1245,8 @@ export default function Tool({
               <h2 id="drawer-title">
                 {scoring
                   ? "How we score"
-                  : providers.find((p) => p.id === drawer?.provider_id)
-                      ?.displayName + " response"}
+                  : (providers.find((p) => p.id === drawer?.provider_id)
+                      ?.displayName ?? drawer?.provider_id) + " response"}
               </h2>
               <button
                 className="icon-button"

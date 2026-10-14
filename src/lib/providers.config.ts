@@ -1,9 +1,10 @@
+// Bump when the frontend/VPS API contract changes (v1.6 = three sources and
+// 2–5 questions). A Vercel frontend refuses a VPS reporting a different value.
+export const BACKEND_CONTRACT = 2;
 export const definitions = [
   ["chatgpt", "ChatGPT", "https://chatgpt.com/"],
   ["gemini", "Gemini", "https://gemini.google.com/"],
-  ["copilot", "Microsoft Copilot", "https://copilot.microsoft.com/"],
   ["google-ai", "Google AI Mode", "https://www.google.com/ai"],
-  ["duckai", "Duck.ai", "https://duck.ai/"],
 ] as const;
 export function providers() {
   return definitions.map(([id, displayName, url]) => ({
@@ -14,12 +15,13 @@ export function providers() {
     adapter: "playwright" as const,
     modelId: "",
     key: "",
-    webSearch: id !== "duckai",
+    webSearch: true,
     costUsd: 0,
     timeoutMs: 90000,
     maxConcurrency: 1,
     enabled: !(process.env.BROWSER_DISABLED_PROVIDERS || "")
       .split(",")
+      .map((v) => v.trim().toLowerCase())
       .includes(id),
   }));
 }
@@ -27,7 +29,7 @@ export const publicProviders = definitions.map(([id, displayName]) => ({
   id,
   displayName,
   tier: "Browser",
-  webSearch: id !== "duckai",
+  webSearch: true,
 }));
 export function getPublicProviders() {
   return providers().map((p) => ({
@@ -41,4 +43,4 @@ export function getPublicProviders() {
     reason: "Public browser access must be checked on your VPS.",
   }));
 }
-export const checkDeadlineSeconds = (runCount = 25) => runCount * 90 + 120;
+export const checkDeadlineSeconds = (runCount = 15) => runCount * 90 + 120;

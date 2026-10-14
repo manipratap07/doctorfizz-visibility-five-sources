@@ -4,30 +4,12 @@ import { redis, providerQueue } from "../lib/redis";
 import { query, pool } from "../lib/db";
 import { processBrowserRun } from "./process-run";
 import { finish, enqueue } from "../lib/checks";
+import { launchContext, egressIp, sweepProfiles } from "./launch";
 const log = pino({ redact: ["key", "token", "ip"] });
 const workers: Worker[] = [];
 async function startup() {
-  const q = providerQueue("browser");
-  await q.setGlobalConcurrency(1);
-  await q.close();
-  const worker = new Worker(
-    "browser-provider",
-    async (job) => {
-      await processBrowserRun(job.data.runId, job.data.checkId);
-    },
-    { connection: redis(), concurrency: 1 },
-  );
-  worker.on("failed", async (job, error) => {
-    log.error({ event: "browser_job_failed", message: error.message });
-    if (job) {
-      await query(
-        "UPDATE llm_runs SET status='error',phase='failed',phase_message='Browser worker failed.',reason='Browser worker failed.',phase_updated_at=now(),completed_at=now() WHERE id=$1 AND status IN ('queued','running')",
-        [job.data.runId],
-      );
-      await finish(job.data.checkId);
-    }
-  });
-  workers.push(worker);
+  // Deadlines and reconcile need no browser, so they start first: a broken
+  // browser or proxy setting must not stop checks from being finalised.
   const deadline = new Worker(
     "deadlines",
     async (job) => {
@@ -45,8 +27,10 @@ async function startup() {
         "SELECT id FROM checks WHERE status!='completed' AND deadline_at<now()",
       );
       for (const c of old) await finish(c.id, true);
+      // 'running' too: a run whose job was lost in a crash is re-queued
+      // (BullMQ de-duplicates by run id while its job still exists).
       const pending = await query<{ id: string }>(
-        "SELECT DISTINCT c.id FROM checks c JOIN llm_runs r ON r.check_id=c.id WHERE c.status!='completed' AND c.deadline_at>now() AND r.status='queued'",
+        "SELECT DISTINCT c.id FROM checks c JOIN llm_runs r ON r.check_id=c.id WHERE c.status!='completed' AND c.deadline_at>now() AND r.status IN ('queued','running')",
       );
       for (const c of pending) await enqueue(c.id);
       await query(
@@ -69,6 +53,7 @@ async function startup() {
       await query(
         "DELETE FROM leads WHERE consent_at<now()-interval '90 days'",
       );
+      await sweepProfiles();
       await query(
         "DELETE FROM visitors v WHERE created_at<now()-interval '90 days' AND NOT EXISTS(SELECT 1 FROM leads l WHERE l.visitor_id=v.id) AND NOT EXISTS(SELECT 1 FROM site_profiles s WHERE s.visitor_id=v.id) AND NOT EXISTS(SELECT 1 FROM usage_events u WHERE u.visitor_id=v.id)",
       );
@@ -80,7 +65,6 @@ async function startup() {
   };
   await reconcile();
   const timer = setInterval(reconcile, 10000);
-  log.info({ event: "worker_ready" });
   for (const sig of ["SIGTERM", "SIGINT"])
     process.on(sig, async () => {
       clearInterval(timer);
@@ -89,6 +73,58 @@ async function startup() {
       await redis().quit();
       process.exit(0);
     });
+
+  // Prove the browser starts and which exit IP providers will see. A failure is
+  // logged, not fatal: each run then reports the launch error and its check is
+  // finalised and refunded.
+  try {
+    const probe = await launchContext("_egress");
+    try {
+      log.info({
+        event: "browser_egress",
+        egressIp: await egressIp(probe).catch((e) => "unknown: " + e.message),
+        proxy: !!process.env.RESIDENTIAL_PROXY_URL,
+      });
+    } finally {
+      await probe.close().catch(() => {});
+    }
+  } catch (e) {
+    log.error({
+      event: "browser_start_failed",
+      message: (e as Error).message.split("\n")[0],
+    });
+  }
+
+  const q = providerQueue("browser");
+  await q.setGlobalConcurrency(1);
+  await q.close();
+  const worker = new Worker(
+    "browser-provider",
+    async (job) => {
+      await processBrowserRun(job.data.runId, job.data.checkId);
+    },
+    { connection: redis(), concurrency: 1 },
+  );
+  // Synchronous listener: an async one that throws (e.g. Postgres is down
+  // while a job fails) becomes an unhandled rejection that kills the worker.
+  worker.on("failed", (job, error) => {
+    void (async () => {
+      log.error({ event: "browser_job_failed", message: error.message });
+      if (!job) return;
+      await query(
+        "UPDATE llm_runs SET status='error',phase='failed',phase_message='Browser worker failed.',reason='Browser worker failed.',phase_updated_at=now(),completed_at=now() WHERE id=$1 AND status IN ('queued','running')",
+        [job.data.runId],
+      );
+      await finish(job.data.checkId);
+    })().catch((e) =>
+      log.error({
+        event: "failed_handler_error",
+        message: (e as Error).message,
+      }),
+    );
+  });
+  workers.push(worker);
+  log.info({ event: "worker_ready" });
 }
 startup().catch((e) => {
   log.error({ event: "startup_failed", message: e.message });

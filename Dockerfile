@@ -20,8 +20,15 @@ WORKDIR /app
 RUN groupadd -r dfworker && useradd -r -g dfworker -d /app dfworker
 COPY package*.json ./
 RUN npm ci
+# Real Google Chrome (not the bundled Chromium build) plus an X server, so the
+# worker runs a headed browser on a virtual display instead of headless mode.
+RUN npx playwright install --with-deps chrome \
+  && apt-get update && apt-get install -y --no-install-recommends xvfb \
+  && rm -rf /var/lib/apt/lists/*
 COPY --chown=dfworker:dfworker . .
 RUN mkdir -p internal-debug && chown dfworker:dfworker internal-debug
-ENV NODE_ENV=production
+# DISPLAY is image-wide so `docker compose exec worker npm run browser:probe` also finds Xvfb.
+ENV NODE_ENV=production DISPLAY=:99
 USER dfworker
+ENTRYPOINT ["sh", "/app/deploy/worker-entrypoint.sh"]
 CMD ["npm","run","worker"]

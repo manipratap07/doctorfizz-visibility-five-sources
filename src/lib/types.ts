@@ -31,6 +31,9 @@ export type RunPhase =
 export type BrowserInput = {
   prompt: string;
   signal: AbortSignal;
+  // Epoch ms when `signal` fires. The adapter stops polling a little earlier so
+  // it can return a clean timeout instead of being torn down mid-call.
+  deadlineAt?: number;
   onProgress?: (
     phase: RunPhase,
     message: string,

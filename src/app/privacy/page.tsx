@@ -7,7 +7,7 @@ export default function Privacy() {
       <h1>Privacy policy</h1>
       <p>
         DoctorFizz uses your website or business name and aliases to identify
-        brand mentions in captured answers. Your five questions are sent to the
+        brand mentions in captured answers. Your questions are sent to the
         selected chatbot websites as written, after trimming outer whitespace,
         including any brand details you put in them. We store each question,
         source status, captured answer and evidence with the result.

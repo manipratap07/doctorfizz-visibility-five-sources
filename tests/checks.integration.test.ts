@@ -1,6 +1,7 @@
 import { beforeAll, afterAll, it, expect, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { readFileSync } from "node:fs";
+import { hashBrandKey, hashLegacyUsageDomains } from "../src/lib/brand-key";
 import { randomUUID } from "node:crypto";
 const state = vi.hoisted(() => ({
   db: null as unknown as PGlite,
@@ -20,7 +21,7 @@ vi.mock("../src/lib/provider-adapters", () => ({
         await input.onProgress?.(
           phase,
           `Fixture ${phase}`,
-          "https://copilot.microsoft.com/",
+          "https://chatgpt.com/",
         );
         const result = await state.db.query<{ phase: string }>(
           "SELECT phase FROM llm_runs WHERE status='running'",
@@ -70,7 +71,7 @@ const input = () => ({
     { length: 5 },
     (_, i) => `Which software is useful for customer situation ${i + 1}?`,
   ),
-  providers: ["copilot", "duckai"],
+  providers: ["chatgpt", "google-ai"],
   idempotencyKey: randomUUID(),
 });
 beforeAll(async () => {
@@ -78,6 +79,7 @@ beforeAll(async () => {
   await state.db.exec(readFileSync("db/001.sql", "utf8"));
   await state.db.exec(readFileSync("db/001.sql", "utf8")); // Additive migration is safe to repeat.
   process.env.MAX_PENDING_CHECKS = "10";
+  process.env.IP_HASH_SALT = "s".repeat(32);
   process.env.DAILY_BUDGET_USD = "0";
   process.env.ANALYSIS_COST_CEILING_USD = "0.02";
   await state.db.query("INSERT INTO visitors(id) VALUES($1)", [visitor]);
@@ -122,14 +124,14 @@ it("creates durable runs, reuses idempotency and enforces ownership", async () =
 it("preserves successful partial results and times out pending jobs", async () => {
   const a = await createCheck(visitor, "hash", input());
   await state.db.query(
-    "UPDATE llm_runs SET status='ok',answer_text='Evidence' WHERE check_id=$1 AND provider_id='copilot'",
+    "UPDATE llm_runs SET status='ok',answer_text='Evidence' WHERE check_id=$1 AND provider_id='chatgpt'",
     [a.checkId],
   );
   await finish(a.checkId, true);
   const c = await getCheck(a.checkId);
   expect(c?.status).toBe("completed");
   expect(c?.refunded).toBe(false);
-  expect(c?.runs.find((r) => r.provider_id === "duckai")?.status).toBe(
+  expect(c?.runs.find((r) => r.provider_id === "google-ai")?.status).toBe(
     "timeout",
   );
 });
@@ -179,18 +181,18 @@ it("does not reset allowance when a visitor cookie changes on the same IP", asyn
     createCheck(other, "hash", {
       profileId: site,
       prompts: input().prompts,
-      providers: ["copilot"],
+      providers: ["chatgpt"],
       idempotencyKey: randomUUID(),
     }),
   ).rejects.toThrow("five free");
 });
-it("requires exactly five valid user questions and rolls back invalid batches", async () => {
+it("requires two to five valid user questions and rolls back invalid batches", async () => {
   const before = (
     await state.db.query<{ n: number }>("SELECT count(*)::int n FROM checks")
   ).rows[0].n;
   for (const prompts of [
-    input().prompts.slice(0, 4),
-    [...input().prompts, "Sixth question?"],
+    input().prompts.slice(0, 1),
+    [...input().prompts, "Which sixth tool is useful?"],
     ["short", ...input().prompts.slice(1)],
   ]) {
     await expect(
@@ -201,6 +203,33 @@ it("requires exactly five valid user questions and rolls back invalid batches", 
     (await state.db.query<{ n: number }>("SELECT count(*)::int n FROM checks"))
       .rows[0].n,
   ).toBe(before);
+});
+
+it("accepts a two-question batch and creates one run per question and source", async () => {
+  const visitorId = randomUUID(),
+    site = randomUUID();
+  await state.db.query("INSERT INTO visitors(id) VALUES($1)", [visitorId]);
+  await state.db.query(
+    "INSERT INTO site_profiles(id,visitor_id,brand,profile) VALUES($1,$2,$3,$4)",
+    [
+      site,
+      visitorId,
+      JSON.stringify({ name: "Pair", domain: "pair.test", aliases: [] }),
+      "{}",
+    ],
+  );
+  const c = await createCheck(visitorId, "two-question-ip", {
+    profileId: site,
+    prompts: input().prompts.slice(0, 2),
+    providers: ["chatgpt", "gemini", "google-ai"],
+    idempotencyKey: randomUUID(),
+  });
+  const check = await getCheck(c.checkId);
+  expect(check?.prompts).toHaveLength(2);
+  expect(check?.runs).toHaveLength(6);
+  expect(new Set(check?.runs.map((r) => r.prompt_index))).toEqual(
+    new Set([0, 1]),
+  );
 });
 
 it("browser checks require no paid LLM credentials or budget and flag a custom brand query", async () => {
@@ -227,7 +256,7 @@ it("browser checks require no paid LLM credentials or budget and flag a custom b
       "Is Demo a useful service for my small business?",
       ...input().prompts.slice(1),
     ],
-    providers: ["duckai"],
+    providers: ["google-ai"],
     idempotencyKey: randomUUID(),
   });
   const result = await getCheck(c.checkId);
@@ -277,24 +306,24 @@ it("dispatches all twenty distinct prompt/source runs and persists real stages a
   const c = await createCheck(owner, "batch-ip", {
     profileId: site,
     prompts: questions,
-    providers: ["chatgpt", "gemini", "copilot", "google-ai", "duckai"],
+    providers: ["chatgpt", "gemini", "google-ai"],
     idempotencyKey: randomUUID(),
   });
   const check = await getCheck(c.checkId);
-  expect(check?.runs).toHaveLength(25);
+  expect(check?.runs).toHaveLength(15);
   const [deadline] = (
     await state.db.query<{ seconds: number }>(
       "SELECT extract(epoch from(deadline_at-created_at)) seconds FROM checks WHERE id=$1",
       [c.checkId],
     )
   ).rows;
-  expect(Number(deadline.seconds)).toBeGreaterThanOrEqual(2369);
+  expect(Number(deadline.seconds)).toBeGreaterThanOrEqual(1469);
   state.sent = [];
   state.observed = [];
   for (const run of check!.runs) await processBrowserRun(run.id, c.checkId);
-  expect(state.sent).toEqual(questions.flatMap((q) => Array(5).fill(q)));
+  expect(state.sent).toEqual(questions.flatMap((q) => Array(3).fill(q)));
   expect(state.observed).toEqual(
-    Array.from({ length: 25 }, () => [
+    Array.from({ length: 15 }, () => [
       "opening",
       "submitting",
       "waiting",
@@ -330,11 +359,11 @@ it("backfills existing single-question links without changing their answers or b
     [question, site],
   );
   await state.db.query(
-    "INSERT INTO checks(id,visitor_id,site_profile_id,prompt_id,prompt_text,brand,selected_providers,estimated_cost,deadline_at,idempotency_key,prompt_bias,status) VALUES($1,$2,$3,$4,'Is Demo a useful brand?','{}','[\"copilot\"]',0,now()+interval '1 hour',$5,true,'completed')",
+    "INSERT INTO checks(id,visitor_id,site_profile_id,prompt_id,prompt_text,brand,selected_providers,estimated_cost,deadline_at,idempotency_key,prompt_bias,status) VALUES($1,$2,$3,$4,'Is Demo a useful brand?','{}','[\"chatgpt\"]',0,now()+interval '1 hour',$5,true,'completed')",
     [check, owner, site, question, randomUUID()],
   );
   await state.db.query(
-    "INSERT INTO llm_runs(id,check_id,provider_id,repeat_index,status,answer_text) VALUES($1,$2,'copilot',0,'ok','Original captured answer.')",
+    "INSERT INTO llm_runs(id,check_id,provider_id,repeat_index,status,answer_text) VALUES($1,$2,'chatgpt',0,'ok','Original captured answer.')",
     [run, check],
   );
   await state.db.exec(readFileSync("db/001.sql", "utf8"));
@@ -346,4 +375,26 @@ it("backfills existing single-question links without changing their answers or b
     phase: "completed",
     answer_text: "Original captured answer.",
   });
+});
+
+it("hashes legacy plaintext usage domains once, matching new brand keys", async () => {
+  const visitorId = randomUUID(),
+    row = randomUUID();
+  await state.db.query("INSERT INTO visitors(id) VALUES($1)", [visitorId]);
+  await state.db.query(
+    "INSERT INTO usage_events(id,visitor_id,ip_hash,domain,cost) VALUES($1,$2,'legacy-ip','legacy.example',0)",
+    [row, visitorId],
+  );
+  const salt = "s".repeat(32);
+  const run = (sql: string, args?: unknown[]) =>
+    state.db.query<{ id: string; domain: string }>(sql, args);
+  expect(await hashLegacyUsageDomains(run, salt)).toBeGreaterThanOrEqual(1);
+  const [hashed] = (
+    await state.db.query<{ domain: string }>(
+      "SELECT domain FROM usage_events WHERE id=$1",
+      [row],
+    )
+  ).rows;
+  expect(hashed.domain).toBe(hashBrandKey("legacy.example", salt));
+  expect(await hashLegacyUsageDomains(run, salt)).toBe(0);
 });

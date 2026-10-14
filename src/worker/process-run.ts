@@ -32,9 +32,11 @@ export async function processBrowserRun(runId: string, checkId: string) {
     "UPDATE checks SET status='running' WHERE id=$1 AND status='queued'",
     [checkId],
   );
+  const budget = Math.min(p.timeoutMs, remaining);
   const result = await getAdapter(p.id).run({
     prompt: row.prompt_text,
-    signal: AbortSignal.timeout(Math.min(p.timeoutMs, remaining)),
+    signal: AbortSignal.timeout(budget),
+    deadlineAt: Date.now() + budget,
     onProgress: async (phase, message, url) => {
       await query(
         "UPDATE llm_runs SET phase=$2,phase_message=$3,source_url=coalesce($4,source_url),phase_updated_at=now() WHERE id=$1 AND status='running'",

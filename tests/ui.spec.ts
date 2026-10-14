@@ -6,9 +6,9 @@ const questions = [
   "Recommend tools for a new business in Bengaluru.",
   "कौन से सॉफ्टवेयर छोटे व्यवसाय के लिए उपयोगी हैं?",
 ];
-const sources = ["chatgpt", "gemini", "copilot", "google-ai", "duckai"];
+const sources = ["chatgpt", "gemini", "google-ai"];
 for (const width of [1440, 768, 390, 360])
-  test(`five-question batch input, live progress and results at ${width}px`, async ({
+  test(`question batch input, live progress and results at ${width}px`, async ({
     page,
   }) => {
     test.setTimeout(60000);
@@ -36,7 +36,8 @@ for (const width of [1440, 768, 390, 360])
         sources.map((provider, i) => {
           const completed =
             stage === 2 || (stage === 1 && p.index === 0 && i === 0);
-          const failed = stage === 2 && p.index === 4 && i === 4;
+          const failed =
+            stage === 2 && p.index === 4 && i === sources.length - 1;
           const collecting = stage === 1 && p.index === 0 && i === 1;
           const opening = stage === 0 && p.index === 0 && i === 0;
           return {
@@ -71,7 +72,7 @@ for (const width of [1440, 768, 390, 360])
                   : opening
                     ? "Opening the public chatbot site."
                     : "Waiting for an available browser.",
-            source_url: "https://copilot.microsoft.com/",
+            source_url: "https://chatgpt.com/",
             reason: failed ? "Daily guest limit reached." : null,
             answer_text:
               completed && !failed
@@ -80,7 +81,7 @@ for (const width of [1440, 768, 390, 360])
             browser_evidence:
               completed && !failed
                 ? {
-                    pageUrl: "https://copilot.microsoft.com/",
+                    pageUrl: "https://chatgpt.com/",
                     capturedAt: new Date().toISOString(),
                     answerHash: `fixture-hash-${p.index + 1}`,
                     captureMethod: "visible_dom",
@@ -126,7 +127,7 @@ for (const width of [1440, 768, 390, 360])
     );
     await page.route("**/api/checks", (r) => {
       posted = r.request().postDataJSON().prompts;
-      expect(r.request().postDataJSON().providers).toHaveLength(5);
+      expect(r.request().postDataJSON().providers).toHaveLength(3);
       expect(r.request().postDataJSON()).not.toHaveProperty("promptId");
       return r.fulfill({ json: { checkId: "test-check", attemptsLeft: 4 } });
     });
@@ -142,9 +143,15 @@ for (const width of [1440, 768, 390, 360])
     await expect(
       page.getByRole("button", { name: "Use my own prompt" }),
     ).toHaveCount(0);
-    const run = page.getByRole("button", { name: "Run my five questions" });
+    const run = page.getByRole("button", { name: "Run my questions" });
     await expect(run).toBeDisabled();
-    for (let i = 0; i < 5; i++)
+    // At least two questions are required; the rest are optional.
+    await page.locator("#batch-prompt-0").fill(questions[0]);
+    await expect(run).toBeDisabled();
+    await page.locator("#batch-prompt-1").fill(questions[1]);
+    await expect(run).toBeEnabled();
+    await expect(page.getByText("2 questions × 3 sources = 6")).toBeVisible();
+    for (let i = 2; i < 5; i++)
       await page.locator(`#batch-prompt-${i}`).fill(questions[i]);
     // A maximum-length unbroken question must also wrap on small screens.
     await page.locator("#batch-prompt-4").fill("x".repeat(1000));
@@ -162,13 +169,13 @@ for (const width of [1440, 768, 390, 360])
     expect(posted).toEqual(questions);
     await expect(page).toHaveURL(/\/\?check=test-check$/);
     const progress = page.getByRole("region", { name: "Collection progress" });
-    await expect(progress.getByText("0 / 25 finished")).toBeVisible();
+    await expect(progress.getByText("0 / 15 finished")).toBeVisible();
     await expect(
       progress.getByText("Opening the public chatbot site."),
     ).toBeVisible();
     await expect(page.locator("#batch-prompt-0")).toBeDisabled();
     stage = 1;
-    await expect(progress.getByText("1 / 25 finished")).toBeVisible({
+    await expect(progress.getByText("1 / 15 finished")).toBeVisible({
       timeout: 10000,
     });
     await expect(
@@ -181,16 +188,16 @@ for (const width of [1440, 768, 390, 360])
         .first(),
     ).toBeEnabled();
     stage = 2;
-    await expect(progress.getByText("25 / 25 finished")).toBeVisible({
+    await expect(progress.getByText("15 / 15 finished")).toBeVisible({
       timeout: 10000,
     });
     await expect(
-      progress.getByText("24 answers saved · 1 unavailable · 0 remaining"),
+      progress.getByText("14 answers saved · 1 unavailable · 0 remaining"),
     ).toBeVisible();
     await page.getByRole("tab", { name: /Question 5/ }).click();
     await expect(page.locator(".used-prompt p")).toHaveText(questions[4]);
     await expect(page.getByRole("tabpanel").locator(".result-row")).toHaveCount(
-      5,
+      sources.length,
     );
     await expect(
       page.getByRole("tabpanel").getByText("Daily guest limit reached."),

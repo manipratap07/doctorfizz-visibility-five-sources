@@ -1,8 +1,8 @@
-import { chromium } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { browserTargets } from "./browser.config";
 import { collectOnPage, sessionBarrier } from "./browser-adapter";
+import { launchContext, egressIp } from "./launch";
 
 // Operator-only diagnostic. No login, cookies, headers or private API replay.
 async function main() {
@@ -12,21 +12,20 @@ async function main() {
   const target = browserTargets[id];
   if (!target)
     throw new Error(
-      "Unknown provider. Use chatgpt, gemini, copilot, google-ai or duckai.",
+      "Unknown provider. Use chatgpt, gemini or google-ai.",
     );
   const directory = join("internal-debug", id + "-" + Date.now());
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.BROWSER_EXECUTABLE_PATH || undefined,
-  });
+  // Same browser, profile style and proxy route as production runs.
+  const context = await launchContext(id);
+  const exitIp = await egressIp(context).catch((e) => "unknown: " + e.message);
   const failures: { url: string; status?: number; error?: string }[] = [];
   const safeUrl = (raw: string) => {
     const u = new URL(raw);
     return u.origin + u.pathname;
   };
   try {
-    const page = await browser.newPage();
+    const page = context.pages()[0] ?? (await context.newPage());
     page.on("response", (r) => {
       if (r.status() >= 400)
         failures.push({ url: safeUrl(r.url()), status: r.status() });
@@ -46,6 +45,7 @@ async function main() {
             prompt:
               "What are three project management tools for a small business? Explain your choices.",
             signal: AbortSignal.timeout(90000),
+            deadlineAt: Date.now() + 90000,
             onProgress: async (phase, message) => {
               console.log(JSON.stringify({ provider: id, phase, message }));
             },
@@ -53,6 +53,7 @@ async function main() {
         : undefined;
     const report = {
       provider: id,
+      egressIp: exitIp,
       pageUrl: page.url(),
       title: await page.title(),
       barrier,
@@ -100,13 +101,14 @@ async function main() {
         provider: id,
         status: result?.status || barrier?.status || "inspection_only",
         directory,
+        egressIp: exitIp,
         title: report.title,
         answerRoots: report.answerRoots,
         failures,
       }),
     );
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 main().catch((e) => {

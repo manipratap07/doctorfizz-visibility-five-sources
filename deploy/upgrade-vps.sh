@@ -23,7 +23,7 @@ from pathlib import Path
 import shutil,sys
 source,target=map(Path,sys.argv[1:])
 for item in source.iterdir():
-    if item.name in {'.env','.git','node_modules','.next','test-results','playwright-report'}: continue
+    if item.name in {'.env','.git','node_modules','.next','test-results','playwright-report','internal-debug'}: continue
     destination=target/item.name
     if item.is_dir(): shutil.copytree(item,destination,dirs_exist_ok=True)
     else: shutil.copy2(item,destination)
@@ -35,6 +35,13 @@ lines=path.read_text().splitlines()
 changes={'BACKEND_URL':'','TURNSTILE_REQUIRED':'false','MAX_PENDING_CHECKS':'1','DOCTORFIZZ_WEB_PORT':'8089','HEALTH_CHECK_ENABLED':'false'}
 lines=[line for line in lines if line.split('=',1)[0] not in changes]
 lines.extend(key+'='+value for key,value in changes.items())
+# Browser worker settings: add only when missing so operator values survive upgrades.
+present={line.split('=',1)[0]:line.split('=',1)[1] if '=' in line else '' for line in lines}
+proxy=present.get('RESIDENTIAL_PROXY_URL','').strip()
+defaults={'BROWSER_LOCALE':'en-IN','BROWSER_TIMEZONE':'Asia/Kolkata','BROWSER_HEADLESS':'false','BROWSER_BLOCK_RETRIES':'1','RESIDENTIAL_PROXY_URL':'','REQUIRE_PROXY':'true' if proxy else 'false'}
+lines.extend(key+'='+value for key,value in defaults.items() if key not in present)
+if not proxy:
+    print('WARNING: RESIDENTIAL_PROXY_URL is empty; the worker will browse from the VPS IP. Set RESIDENTIAL_PROXY_URL=... and REQUIRE_PROXY=true in '+str(path)+', then run from that folder: docker compose -p doctorfizz-llm up -d --no-deps worker && docker compose -p doctorfizz-llm logs worker | grep browser_egress')
 path.write_text('\n'.join(lines)+'\n');path.chmod(0o600)
 print('Browser runtime settings saved; existing runtime secrets retained.')
 PY

@@ -7,7 +7,7 @@ import { rateLimit } from "@/lib/limits";
 const cell = (v: unknown) =>
   '"' +
   String(v ?? "")
-    .replace(/^[=+@-]/, "'")
+    .replace(/^([=+\-@\t\r])/, "'$1")
     .replace(/"/g, '""') +
   '"';
 export async function GET(
