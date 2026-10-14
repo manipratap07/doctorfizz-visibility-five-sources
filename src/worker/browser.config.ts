@@ -80,13 +80,11 @@ export const browserTargets: Record<string, BrowserTarget> = {
 
 // Container launch settings shared by jobs and diagnostics.
 export const browserConfig = {
-  headless: true,
+  headless: process.env.BROWSER_HEADLESS === "true",
   args: [
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-dev-shm-usage",
-    "--disable-accelerated-2d-canvas",
-    "--disable-gpu",
     "--window-size=1920,1080",
   ],
   viewport: { width: 1920, height: 1080 },

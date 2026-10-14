@@ -5,7 +5,7 @@ export const allowance = () => Number(process.env.FREE_ATTEMPTS || 5);
 export async function usage(id: string, ip?: string) {
   const hash = ip || (await ipHash());
   const [row] = await query<{ n: string }>(
-    "SELECT count(*) n FROM usage_events WHERE (visitor_id=$1 OR ip_hash=$3) AND NOT refunded AND created_at>now()-($2*interval '1 day')",
+    "SELECT count(*) n FROM usage_events WHERE (visitor_id=$1 OR ip_hash=$3) AND created_at>now()-($2*interval '1 day')",
     [id, Number(process.env.WINDOW_DAYS || 30), hash],
   );
   return Math.max(0, allowance() - Number(row.n));

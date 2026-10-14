@@ -8,7 +8,7 @@ const questions = [
 ];
 const sources = ["chatgpt", "gemini", "copilot", "google-ai", "duckai"];
 for (const width of [1440, 768, 390, 360])
-  test(`five-question batch input, live progress and results at ${width}px`, async ({
+  test(`one-question input, live progress and results at ${width}px`, async ({
     page,
   }) => {
     test.setTimeout(60000);
@@ -16,7 +16,7 @@ for (const width of [1440, 768, 390, 360])
     await page.emulateMedia({ reducedMotion: "reduce" });
     let stage = 0,
       posted: string[] = [];
-    const prompts = questions.map((text, index) => ({
+    const prompts = questions.slice(0, 1).map((text, index) => ({
       id: `question-${index}`,
       index,
       text,
@@ -36,7 +36,7 @@ for (const width of [1440, 768, 390, 360])
         sources.map((provider, i) => {
           const completed =
             stage === 2 || (stage === 1 && p.index === 0 && i === 0);
-          const failed = stage === 2 && p.index === 4 && i === 4;
+          const failed = stage === 2 && i === 4;
           const collecting = stage === 1 && p.index === 0 && i === 1;
           const opening = stage === 0 && p.index === 0 && i === 0;
           return {
@@ -137,38 +137,37 @@ for (const width of [1440, 768, 390, 360])
     await expect(page.locator("main")).toHaveAttribute("data-ready", "true");
     await page.getByLabel("Brand / company name").fill("Acme");
     await page.getByRole("button", { name: "Analyse my brand" }).click();
-    await expect(page.locator(".batch-prompt-field textarea")).toHaveCount(5);
+    await expect(page.locator(".batch-prompt-field textarea")).toHaveCount(1);
     await expect(page.getByRole("radio")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Use my own prompt" }),
     ).toHaveCount(0);
-    const run = page.getByRole("button", { name: "Run my five questions" });
+    const run = page.getByRole("button", { name: "Run this question" });
     await expect(run).toBeDisabled();
-    for (let i = 0; i < 5; i++)
-      await page.locator(`#batch-prompt-${i}`).fill(questions[i]);
+    await page.locator("#batch-prompt-0").fill(questions[0]);
     // A maximum-length unbroken question must also wrap on small screens.
-    await page.locator("#batch-prompt-4").fill("x".repeat(1000));
+    await page.locator("#batch-prompt-0").fill("x".repeat(1000));
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-    await page.locator("#batch-prompt-4").fill(questions[4]);
+    await page.locator("#batch-prompt-0").fill(questions[0]);
     await expect(run).toBeEnabled();
     await page
       .locator(".workspace")
       .screenshot({ path: `docs/qa-input-${width}.png` });
     await run.click();
-    expect(posted).toEqual(questions);
+    expect(posted).toEqual([questions[0]]);
     await expect(page).toHaveURL(/\/\?check=test-check$/);
     const progress = page.getByRole("region", { name: "Collection progress" });
-    await expect(progress.getByText("0 / 25 finished")).toBeVisible();
+    await expect(progress.getByText("0 / 5 finished")).toBeVisible();
     await expect(
       progress.getByText("Opening the public chatbot site."),
     ).toBeVisible();
     await expect(page.locator("#batch-prompt-0")).toBeDisabled();
     stage = 1;
-    await expect(progress.getByText("1 / 25 finished")).toBeVisible({
+    await expect(progress.getByText("1 / 5 finished")).toBeVisible({
       timeout: 10000,
     });
     await expect(
@@ -181,14 +180,13 @@ for (const width of [1440, 768, 390, 360])
         .first(),
     ).toBeEnabled();
     stage = 2;
-    await expect(progress.getByText("25 / 25 finished")).toBeVisible({
+    await expect(progress.getByText("5 / 5 finished")).toBeVisible({
       timeout: 10000,
     });
     await expect(
-      progress.getByText("24 answers saved · 1 unavailable · 0 remaining"),
+      progress.getByText("4 answers saved · 1 unavailable · 0 remaining"),
     ).toBeVisible();
-    await page.getByRole("tab", { name: /Question 5/ }).click();
-    await expect(page.locator(".used-prompt p")).toHaveText(questions[4]);
+    await expect(page.locator(".used-prompt p")).toHaveText(questions[0]);
     await expect(page.getByRole("tabpanel").locator(".result-row")).toHaveCount(
       5,
     );
@@ -202,17 +200,10 @@ for (const width of [1440, 768, 390, 360])
       .click();
     const drawer = page.getByRole("dialog");
     await expect(drawer).toBeVisible();
-    await expect(drawer.locator(".drawer-question")).toHaveText(questions[4]);
-    await expect(drawer.getByText(/fixture-hash-5/)).toBeVisible();
-    await expect(drawer.getByText(/Direct brand query/)).toHaveCount(0);
+    await expect(drawer.locator(".drawer-question")).toHaveText(questions[0]);
+    await expect(drawer.getByText(/fixture-hash-1/)).toBeVisible();
+    await expect(drawer.getByText(/Direct brand query/)).toBeVisible();
     await page.keyboard.press("Escape");
-    await page.getByRole("tab", { name: /Question 1/ }).click();
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByRole("tab", { name: /Question 2/ })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await page.keyboard.press("Home");
     await page
       .getByRole("tabpanel")
       .getByRole("button", { name: "View response" })

@@ -5,6 +5,7 @@ import {
 } from "../src/worker/browser-launch";
 afterEach(() => vi.unstubAllEnvs());
 it("does not proxy Gemini merely because a proxy credential exists", () => {
+  vi.stubEnv("REQUIRE_PROXY", "false");
   vi.stubEnv("PROXY_PROVIDERS", "chatgpt, copilot");
   vi.stubEnv("RESIDENTIAL_PROXY_URL", "http://user:secret@proxy.example:823");
   expect(proxyForProvider("gemini")).toBeUndefined();
@@ -15,6 +16,7 @@ it("does not proxy Gemini merely because a proxy credential exists", () => {
   });
 });
 it("separates and decodes credentials and preserves the session suffix", () => {
+  vi.stubEnv("REQUIRE_PROXY", "false");
   vi.stubEnv("PROXY_PROVIDERS", " chatgpt ");
   vi.stubEnv(
     "RESIDENTIAL_PROXY_URL",
@@ -27,18 +29,37 @@ it("separates and decodes credentials and preserves the session suffix", () => {
   });
 });
 it("empty provider list disables all proxy routing", () => {
+  vi.stubEnv("REQUIRE_PROXY", "false");
   vi.stubEnv("PROXY_PROVIDERS", "");
   vi.stubEnv("RESIDENTIAL_PROXY_URL", "http://user:secret@proxy.example:823");
   expect(proxyForProvider("chatgpt")).toBeUndefined();
 });
 it("rejects invalid configuration without exposing credentials", () => {
+  vi.stubEnv("REQUIRE_PROXY", "false");
   vi.stubEnv("PROXY_PROVIDERS", "gemini");
   vi.stubEnv("RESIDENTIAL_PROXY_URL", "not-a-url-secret");
   expect(() => proxyForProvider("gemini")).toThrow(
     /^Invalid proxy configuration/,
   );
   vi.stubEnv("RESIDENTIAL_PROXY_URL", "");
+  expect(proxyForProvider("gemini")).toBeUndefined();
+});
+
+it("requires a sticky session template and never falls back to the VPS", () => {
+  vi.stubEnv("REQUIRE_PROXY", "true");
+  vi.stubEnv("PROXY_PROVIDERS", "");
+  vi.stubEnv("RESIDENTIAL_PROXY_URL", "");
   expect(() => proxyForProvider("gemini")).toThrow("no proxy URL configured");
+  vi.stubEnv("RESIDENTIAL_PROXY_URL", "http://user:pass@proxy.example:823");
+  expect(() => proxyForProvider("gemini")).toThrow("{session}");
+  vi.stubEnv(
+    "RESIDENTIAL_PROXY_URL",
+    "http://user%3Bsessid.%7Bsession%7D:pass@proxy.example:823",
+  );
+  const a = proxyForProvider("gemini")!;
+  const b = proxyForProvider("gemini")!;
+  expect(a.username).toMatch(/^user;sessid\.[a-f0-9]{16}$/);
+  expect(a.username).not.toBe(b.username);
 });
 
 it("does not reuse an account unless the provider is explicitly selected", () => {

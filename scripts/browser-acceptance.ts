@@ -28,22 +28,16 @@ async function main() {
     throw new Error("Frontend acceptance requires the HTTPS APP_URL.");
   const prompts: string[] = arg("prompts")
     ? JSON.parse(readFileSync(arg("prompts")!, "utf8"))
-    : [
-        "Which agencies offer SEO services for small businesses in Bengaluru?",
-        "Recommend web development agencies for a small business in Bengaluru.",
-        "Which Bengaluru agencies help businesses improve their visibility in AI answers?",
-        "What should I compare when choosing a digital marketing agency in Bengaluru?",
-        "What services does Itzfizz offer to businesses?",
-      ];
+    : ["Which agencies offer SEO services for small businesses in Bengaluru?"];
   if (
     !Array.isArray(prompts) ||
-    prompts.length !== 5 ||
+    prompts.length !== 1 ||
     prompts.some(
       (p) => typeof p !== "string" || p.trim().length < 8 || p.length > 1000,
     )
   )
     throw new Error(
-      "Provide a JSON array of five questions, each 8–1,000 characters.",
+      "Provide a JSON array with one question of 8–1,000 characters.",
     );
   let cookie = "";
   async function request(path: string, data?: unknown) {
@@ -117,7 +111,7 @@ async function main() {
       viewUrl: origin + "/?check=" + created.checkId,
     }),
   );
-  const deadline = Date.now() + (checkDeadlineSeconds(5) + 30) * 1000;
+  const deadline = Date.now() + (checkDeadlineSeconds(1) + 30) * 1000;
   let previous = "";
   while (Date.now() < deadline) {
     const check = (await request("/api/checks/" + created.checkId)) as Check;
@@ -139,7 +133,7 @@ async function main() {
     previous = signature;
     if (check.status === "completed") {
       const valid =
-        check.runs.length === 5 &&
+        check.runs.length === 1 &&
         check.runs.every(
           (r) =>
             r.provider_id === provider &&
@@ -162,7 +156,7 @@ async function main() {
           passed: valid,
           checkId: check.id,
           captured: check.runs.filter((r) => r.status === "ok").length,
-          expected: 5,
+          expected: 1,
           refunded: check.refunded,
           runs: state,
         }),

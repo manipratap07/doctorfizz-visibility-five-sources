@@ -4,10 +4,23 @@ import { runtimeInfo } from "./runtime-info";
 import { redis, providerQueue } from "../lib/redis";
 import { query, pool } from "../lib/db";
 import { processBrowserRun } from "./process-run";
+import { withBrowserPage } from "./browser-launch";
 import { finish, enqueue } from "../lib/checks";
 const log = pino({ redact: ["key", "token", "ip"] });
 const workers: Worker[] = [];
 async function startup() {
+  if (process.env.REQUIRE_PROXY === "true") {
+    const probeProvider =
+      (process.env.PROXY_PROVIDERS || "")
+        .split(",")
+        .map((value) => value.trim())
+        .find(Boolean) || "gemini";
+    await withBrowserPage(
+      probeProvider,
+      AbortSignal.timeout(35000),
+      async () => {},
+    );
+  }
   const q = providerQueue("browser");
   await q.setGlobalConcurrency(1);
   await q.close();

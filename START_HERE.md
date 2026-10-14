@@ -1,3 +1,5 @@
+> **Repair release 1.5.1:** Start with `REPAIR_START_HERE.md` and the dated reliability audit. The notes below describe the earlier v1.5 release.
+
 # Start here — new repository, existing VPS, Vercel
 
 This ZIP contains v1.5.0. It has five manual questions and exactly ChatGPT, Gemini, Microsoft Copilot, Google AI Mode and Duck.ai. Extraction places package.json at the folder root. The frontend is Vercel; browser collection is the VPS. Both must run this release.
@@ -121,7 +123,7 @@ This moves the existing DoctorFizz backend's allowed frontend origin to the new 
 2. Enter your business or website and click Analyse my brand.
 3. Type all five of your own questions. No generated prompt cards should appear.
 4. Exactly five source choices should appear. Clear the selection and choose Gemini for the first test after its adapter acceptance passes.
-5. Click Run my five questions. With Gemini only, five browser runs should appear. Collection stages should update from the worker and completed answers should appear as they arrive.
+5. Click Run this question. With Gemini only, one browser run should appear. Collection stages should update from the worker and the completed answer should appear. Repeat from the same input for up to five questions.
 6. Open each question tab and response drawer. Check that the question matches, answers contain actual collected text, and readable source URLs appear only when captured. Export the CSV.
 7. Repeat the layout check on a mobile device or narrow window. Input, progress and result controls should remain usable without horizontal overflow.
 8. Test other sources separately. Login/verification/service errors are real failures and must stay excluded from the score. All five selected sources create 25 attempts, not five guaranteed answers.

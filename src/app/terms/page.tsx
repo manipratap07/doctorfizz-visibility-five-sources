@@ -11,18 +11,18 @@ export default function Terms() {
       </p>
       <h2>Use and limits</h2>
       <p>
-        Write your own five questions to check websites and brands you are
-        authorised to analyse. Do not submit sensitive data or use the service
-        to bypass provider safeguards. One batch of five questions across
-        selected providers is one check. Five checks are available per 30-day
-        visitor window, subject to daily and worker capacity limits.
+        Write your own question to check websites and brands you are authorised
+        to analyse. Do not submit sensitive data or use the service to bypass
+        provider safeguards. One question across selected providers is one
+        check. Five checks are available per 30-day visitor window, subject to
+        daily and worker capacity limits.
       </p>
       <h2>Availability and evidence</h2>
       <p>
         Unavailable providers are excluded from the score. If every provider
-        fails, the allowance is refunded. Each new check captures a fresh
-        browser response. Verify the raw answer before making a business
-        decision.
+        fails, the question still uses one of your five checks. Each new check
+        captures a fresh browser response. Verify the raw answer before making a
+        business decision.
       </p>
       <h2>Independent service</h2>
       <p>

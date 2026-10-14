@@ -6,6 +6,7 @@ node_modules
 !.env.example
 internal-debug
 browser-sessions
+browser-profiles
 playwright-report
 test-results
 *.zip

@@ -23,7 +23,7 @@ export const analyzeSchema = z.object({
 });
 export const checkSchema = z.object({
   profileId: z.uuid(),
-  prompts: z.array(z.string().trim().min(8).max(1000)).length(5),
+  prompts: z.array(z.string().trim().min(8).max(1000)).length(1),
   providers: z.array(z.string()).min(1).max(5),
   turnstileToken: z.string().max(2048),
   idempotencyKey: z.uuid(),

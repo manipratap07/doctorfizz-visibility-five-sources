@@ -35,7 +35,7 @@ export async function createCheck(
     }
     const texts = z
       .array(z.string().trim().min(8).max(1000))
-      .length(5)
+      .length(1)
       .parse(data.prompts);
     const row = (
       await c.query(
@@ -76,7 +76,7 @@ export async function createCheck(
       );
     const stats = (
       await c.query(
-        `SELECT count(*) FILTER (WHERE (visitor_id=$1 OR ip_hash=$2) AND NOT refunded AND created_at>now()-($4*interval '1 day')) visitor_count,count(*) FILTER (WHERE ip_hash=$2 AND created_at>date_trunc('day',now())) ip_count,count(*) FILTER (WHERE domain=$3 AND created_at>date_trunc('day',now())) domain_count FROM usage_events`,
+        `SELECT count(*) FILTER (WHERE (visitor_id=$1 OR ip_hash=$2) AND created_at>now()-($4*interval '1 day')) visitor_count,count(*) FILTER (WHERE ip_hash=$2 AND created_at>date_trunc('day',now())) ip_count,count(*) FILTER (WHERE domain=$3 AND created_at>date_trunc('day',now())) domain_count FROM usage_events`,
         [
           visitorId,
           ip,
@@ -252,15 +252,10 @@ export async function finish(id: string, force = false) {
       await c.query("COMMIT");
       return;
     }
-    const refund = rows.every((r) => r.status !== "ok");
     await c.query(
-      "UPDATE checks SET status='completed',refunded=$2 WHERE id=$1",
-      [id, refund],
+      "UPDATE checks SET status='completed',refunded=false WHERE id=$1",
+      [id],
     );
-    if (refund)
-      await c.query("UPDATE usage_events SET refunded=true WHERE check_id=$1", [
-        id,
-      ]);
     await c.query("COMMIT");
   } catch (e) {
     await c.query("ROLLBACK");

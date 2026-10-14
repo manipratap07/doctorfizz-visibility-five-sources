@@ -70,7 +70,32 @@ export async function sessionBarrier(
     };
 
   const title = await page.title().catch(() => "");
+  const challengeFrame = (
+    await Promise.all(
+      page
+        .frames()
+        .filter((frame) =>
+          /challenges\.cloudflare\.com|\/cdn-cgi\/challenge-platform|recaptcha\/api2/i.test(
+            frame.url(),
+          ),
+        )
+        .map(async (frame) => {
+          const element = await frame.frameElement().catch(() => null);
+          if (!element || !(await element.isVisible().catch(() => false)))
+            return false;
+          const content = await frame
+            .locator("body")
+            .innerText({ timeout: 1500 })
+            .catch(() => "");
+          return /verify|human|security|challenge|captcha|checking your browser/i.test(
+            content,
+          );
+        }),
+    )
+  ).some(Boolean);
   if (
+    challengeFrame ||
+    /(?:^|\.)google\.[^/]+\/sorry(?:\/|\?|$)/i.test(page.url()) ||
     /^just a moment\s*[.!…]*$/i.test(title.trim()) ||
     /performing security verification|verify you are human|verifies you are not a bot|unusual traffic|complete the captcha/i.test(
       interfaceText,
@@ -83,7 +108,7 @@ export async function sessionBarrier(
     };
 
   if (
-    /duck\.ai is temporarily unavailable|something went wrong|unable to generate a response|service (?:is )?temporarily unavailable/i.test(
+    /duck\.ai is temporarily unavailable|unable to generate a response|service (?:is )?temporarily unavailable/i.test(
       interfaceText,
     )
   )

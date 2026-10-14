@@ -28,7 +28,7 @@ cd /root/doctorfizz-visibility-five-sources
 git pull --ff-only origin main
 docker compose -p doctorfizz-visibility-five-sources build web worker
 docker compose -p doctorfizz-visibility-five-sources run --rm --no-deps \
-  -e PROXY_PROVIDERS= -e RESIDENTIAL_PROXY_URL= -e BROWSER_SESSION_PROVIDERS= \
+  -e REQUIRE_PROXY=false -e PROXY_PROVIDERS= -e RESIDENTIAL_PROXY_URL= -e BROWSER_SESSION_PROVIDERS= \
   --entrypoint node worker --import tsx --test tests/worker-runtime.node.ts
 ```
 

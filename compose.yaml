@@ -73,6 +73,7 @@ services:
       BROWSER_STORAGE_STATE_DIR: /app/browser-sessions
     volumes:
       - ./browser-sessions:/app/browser-sessions:ro
+      - browserprofiles:/app/browser-profiles
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -86,3 +87,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  browserprofiles:

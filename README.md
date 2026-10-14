@@ -1,10 +1,14 @@
-# DoctorFizz LLM Visibility Checker — Five Sources v1.5
+> **Repair release 1.5.1:** Start with `REPAIR_START_HERE.md` and the dated reliability audit. The notes below describe the earlier v1.5 release.
+
+# DoctorFizz LLM Visibility Checker — Five Sources v1.5.3
+
+For the one-question flow, headed Chrome worker and current deployment settings, start with [docs/UPDATE_ONE_PROMPT_AND_BROWSER.md](docs/UPDATE_ONE_PROMPT_AND_BROWSER.md). Older repair notes describe prior releases.
 
 This separate package is ready to initialise as a new GitHub repository. It has **exactly five browser sources**: ChatGPT, Gemini, Microsoft Copilot, Google AI Mode and Duck.ai. There are no LLM API credentials or API adapters. Perplexity and Grok have been removed from the current source list.
 
-Enter a business or website, write **exactly five questions** (8–1,000 characters each), select one to five sources, and run. The VPS opens a fresh Playwright session for every question/source pair. One source creates five runs; all five create 25. One batch uses one of the five free checks per 30-day window.
+Enter a business or website, write **one question** (8–1,000 characters), select one to five sources, and run. Repeat from the same input for up to five questions per 30-day visitor window. Each submission uses one free check and creates one browser run per selected source.
 
-Real queued, opening, submitting, waiting, collecting and completed/failed stages are saved to the database. Answers appear while the remaining runs continue. Each question has a results tab, captured answer text, visible source URLs, timestamps, hashes and CSV export. Failed runs are excluded from the score; an entirely failed batch is refunded.
+Real queued, opening, submitting, waiting, collecting and completed/failed stages are saved to the database. Answers appear while the remaining runs continue. Each question has a results tab, captured answer text, visible source URLs, timestamps, hashes and CSV export. Failed providers are excluded from the score; every submitted question counts toward the five-run cap.
 
 ## What is actually verified?
 
@@ -72,7 +76,7 @@ npm run test:e2e
 npm run build
 ```
 
-Local browser tests use explicit fixtures; they do not establish external availability. See [docs/VERIFICATION.md](docs/VERIFICATION.md). The one-browser queue keeps memory bounded on the shared 2-core/8-GB VPS. Each attempt has 90 seconds and the batch deadline is run count × 90 + 120 seconds: at most **39 minutes 30 seconds** for 25 runs. This is an upper deadline, not a promised completion time.
+Local browser tests use explicit fixtures; they do not establish external availability. See [docs/VERIFICATION.md](docs/VERIFICATION.md). The one-browser queue keeps memory bounded on the shared 2-core/8-GB VPS. Each attempt has 90 seconds and the check deadline is run count × 90 + 120 seconds: at most **9 minutes 30 seconds** for five selected sources. This is an upper deadline, not a promised completion time.
 
 ## Capture maintenance
 

@@ -24,7 +24,7 @@ export default function StructuredData() {
           },
           {
             q: "What happens if a provider fails?",
-            a: "Unavailable providers are excluded from scoring. An all-provider failure refunds the check.",
+            a: "Unavailable providers are excluded from scoring. Each submitted question uses one of the five free checks.",
           },
         ].map(({ q, a }) => ({
           "@type": "Question",

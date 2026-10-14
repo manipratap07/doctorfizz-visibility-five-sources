@@ -17,11 +17,16 @@ CMD ["node","server.js"]
 FROM mcr.microsoft.com/playwright:v1.64.0-noble AS worker
 WORKDIR /app
 # Official Playwright image. Browser launch happens only in this separate service.
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb ca-certificates wget \
+    && wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get install -y --no-install-recommends /tmp/google-chrome.deb \
+    && rm -f /tmp/google-chrome.deb \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd -r dfworker && useradd -r -g dfworker -d /app dfworker
 COPY package*.json ./
 RUN npm ci
 COPY --chown=dfworker:dfworker . .
-RUN mkdir -p internal-debug && chown dfworker:dfworker internal-debug
-ENV NODE_ENV=production
+RUN mkdir -p internal-debug browser-profiles && chown -R dfworker:dfworker internal-debug browser-profiles
+ENV NODE_ENV=production BROWSER_EXECUTABLE_PATH=/usr/bin/google-chrome BROWSER_PROFILE_DIR=/app/browser-profiles
 USER dfworker
-CMD ["npm","run","worker"]
+CMD ["xvfb-run","-a","npm","run","worker"]

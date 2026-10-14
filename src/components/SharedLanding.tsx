@@ -40,12 +40,12 @@ const steps = [
     "Add your website or business name so we can check mentions of your brand.",
   ],
   [
-    "Write five questions",
-    "Type five questions in your own words. Each question will be sent exactly as written.",
+    "Write one question",
+    "Enter one question at a time. Run up to five questions for free.",
   ],
   [
     "Follow the collection",
-    "Choose the chatbot sources and follow each browser run as it sends your question and collects the answer. One batch uses one check.",
+    "Choose the chatbot sources and follow each browser run as it sends your question and collects the answer. One question uses one check.",
   ],
   [
     "Read the evidence",

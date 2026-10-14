@@ -55,23 +55,23 @@ declare global {
 const faq = [
   [
     "What does this check measure?",
-    "It sends your five questions to the selected chatbot websites in fresh browser sessions and collects their visible answers, recommendations and citations.",
+    "It sends your question to the selected chatbot websites and collects their visible answers, recommendations and citations.",
   ],
   [
     "Is this the same as using each consumer AI app?",
-    "These are public, logged-out browser snapshots. Free access can change or require login. The tool captures only completed answers; it reports blocked sessions separately.",
+    "These are browser snapshots from public provider pages or an operator-authorised session. Access can change or require login. The tool captures only completed answers and reports blocked sessions separately.",
   ],
   [
-    "Can I write any five questions?",
-    "Yes. Write five questions with 8 to 1,000 characters each. Company references such as ‘we’ and ‘our company’ use your business profile and are labelled direct brand queries. General recommendation questions run without adding your brand.",
+    "Can I write my own question?",
+    "Yes. Write one question with 8 to 1,000 characters. Run another question after the result. Company references such as ‘we’ use your business profile and are labelled direct brand queries.",
   ],
   [
     "What happens if a provider fails?",
-    "It is marked unavailable and excluded from the score. If all selected providers fail, the check is refunded automatically.",
+    "It is marked unavailable and excluded from the score. A submitted question still counts towards your five free runs.",
   ],
   [
     "How do the five free checks work?",
-    "One batch of five questions across your selected providers counts as one check. You receive five checks per 30-day visitor window, with additional daily limits to protect the free tool.",
+    "One question across your selected providers uses one check. You can run up to five questions per 30-day visitor window, with additional daily limits to protect the free tool.",
   ],
   [
     "Are these permanent rankings?",
@@ -168,7 +168,7 @@ export default function Tool({
   const [profile, setProfile] = useState<SiteProfile | null>(null),
     [profileId, setProfileId] = useState(""),
     [brand, setBrand] = useState<Brand | null>(null),
-    [promptTexts, setPromptTexts] = useState<string[]>(Array(5).fill(""));
+    [promptText, setPromptText] = useState("");
   const [resultPrompt, setResultPrompt] = useState(0);
   const [chosen, setChosen] = useState(
       providers
@@ -356,17 +356,15 @@ export default function Tool({
     }
   }
   async function run() {
-    setBusy("Preparing your five-question batch");
+    setBusy("Preparing your question");
     setError("");
     try {
       requestKey.current ||= crypto.randomUUID();
-      if (promptTexts.some((text) => text.trim().length < 8))
-        throw new Error(
-          "Enter all five questions, with at least 8 characters each.",
-        );
+      if (promptText.trim().length < 8)
+        throw new Error("Enter a question with at least 8 characters.");
       const j = await api("/api/checks", {
         profileId,
-        prompts: promptTexts.map((text) => text.trim()),
+        prompts: [promptText.trim()],
         providers: chosen,
         turnstileToken: token,
         idempotencyKey: requestKey.current,
@@ -375,6 +373,7 @@ export default function Tool({
       setLeft(j.attemptsLeft);
       setWatchId(j.checkId);
       setCheck(await api("/api/checks/" + j.checkId));
+      setPromptText("");
       window.history.replaceState({}, "", "/?check=" + j.checkId);
       requestKey.current = "";
       window.turnstile?.reset();
@@ -465,9 +464,9 @@ export default function Tool({
               </p>
               <Stack first="WHERE DOES" last="AI SEE YOU?" level={1} />
               <p className="hero-description" data-deck>
-                One brand. Five questions from you. See which AI providers name
-                you, which competitors they recommend and the evidence behind
-                every answer.
+                One brand. Up to five questions, one at a time. See which AI
+                providers name you, which competitors they recommend and the
+                evidence behind every answer.
               </p>
               <dl className="facts" data-facts>
                 {[
@@ -596,7 +595,7 @@ export default function Tool({
               READING YOUR WEBSITE
             </div>
             <p className="secondary">
-              Preparing your business profile for your five questions.
+              Preparing your business profile for your questions.
             </p>
             <div className="skeleton-row">
               <i />
@@ -617,58 +616,45 @@ export default function Tool({
           <section className="wrap workspace" ref={promptRef}>
             <div className="section-top">
               <div>
-                <div className="kicker">02 / WRITE YOUR FIVE QUESTIONS</div>
+                <div className="kicker">02 / WRITE YOUR QUESTION</div>
                 <h2>
-                  Your questions.
+                  Your question.
                   <br />
                   <span className="gradient">Real browser answers.</span>
                 </h2>
               </div>
               <p className="secondary">
-                Enter five questions in your own words.
+                Enter one question in your own words.
                 <br />
-                Each one runs across the sources you select below.
+                Run it, then enter your next question. You have five free runs.
               </p>
             </div>
             <div className="batch-prompt-inputs">
-              {promptTexts.map((text, index) => (
-                <label
-                  className="batch-prompt-field"
-                  key={index}
-                  htmlFor={`batch-prompt-${index}`}
-                >
-                  <span className="batch-field-head">
-                    <b>Question {index + 1}</b>
-                    <small>{text.length}/1,000</small>
-                  </span>
-                  <textarea
-                    id={`batch-prompt-${index}`}
-                    rows={3}
-                    minLength={8}
-                    maxLength={1000}
-                    disabled={active || !!busy}
-                    value={text}
-                    placeholder={`Write question ${index + 1} for the selected AI sources…`}
-                    onChange={(e) => {
-                      setPromptTexts((values) =>
-                        values.map((value, i) =>
-                          i === index ? e.target.value : value,
-                        ),
-                      );
-                      requestKey.current = "";
-                    }}
-                    aria-describedby={`question-hint-${index}`}
-                  />
-                  <span
-                    id={`question-hint-${index}`}
-                    className="batch-field-hint"
-                  >
-                    {text.trim().length > 0 && text.trim().length < 8
-                      ? "Add a little more detail: at least 8 characters."
-                      : "Company references such as ‘we’ use your business profile."}
-                  </span>
-                </label>
-              ))}
+              <label className="batch-prompt-field" htmlFor="batch-prompt-0">
+                <span className="batch-field-head">
+                  <b>Your question</b>
+                  <small>{promptText.length}/1,000</small>
+                </span>
+                <textarea
+                  id="batch-prompt-0"
+                  rows={3}
+                  minLength={8}
+                  maxLength={1000}
+                  disabled={active || !!busy}
+                  value={promptText}
+                  placeholder="Write a question for the selected AI sources…"
+                  onChange={(e) => {
+                    setPromptText(e.target.value);
+                    requestKey.current = "";
+                  }}
+                  aria-describedby="question-hint-0"
+                />
+                <span id="question-hint-0" className="batch-field-hint">
+                  {promptText.trim().length > 0 && promptText.trim().length < 8
+                    ? "Add a little more detail: at least 8 characters."
+                    : "Company references such as ‘we’ use your business profile."}
+                </span>
+              </label>
             </div>
             <p className="secondary batch-input-note">
               Questions that name your brand or refer to your company use your
@@ -749,7 +735,7 @@ export default function Tool({
               ))}
             </div>
             <p className="note">
-              Each question opens a fresh browser session on each selected site.
+              Your question opens a browser session on each selected site.
               Finished answers appear as they are collected.
             </p>
             <div className="run-bar">
@@ -762,8 +748,8 @@ export default function Tool({
                     : `${left} of 5 free checks left`}
                 </b>
                 <p className="secondary">
-                  Five questions × {chosen.length} sources = {5 * chosen.length}{" "}
-                  browser runs. One batch uses one free check.
+                  One question × {chosen.length} sources = {chosen.length}{" "}
+                  browser runs. This question uses one free check.
                 </p>
               </div>
               <div className="run-controls">
@@ -776,7 +762,7 @@ export default function Tool({
                     active ||
                     !!busy ||
                     !chosen.length ||
-                    promptTexts.some((text) => text.trim().length < 8) ||
+                    promptText.trim().length < 8 ||
                     left === 0 ||
                     (!!turnstileKey && !token)
                   }
@@ -789,7 +775,7 @@ export default function Tool({
                     </>
                   ) : (
                     <>
-                      Run my five questions
+                      Run this question
                       <ArrowRight size={17} />
                     </>
                   )}
@@ -816,7 +802,7 @@ export default function Tool({
             </div>
             <BatchProgress check={check} providers={providers} />
             <p className="batch-summary-note">
-              Overall readout across your questions.{" "}
+              Readout for this question.{" "}
               {check.prompt_bias
                 ? "This batch includes direct brand queries; use the question tabs to compare their answers separately."
                 : "Failed sources are excluded from the score."}
@@ -1050,12 +1036,6 @@ export default function Tool({
                   );
                 })}
             </div>
-            {check.refunded && (
-              <p className="note">
-                No provider returned a usable answer. Your free check was
-                refunded.
-              </p>
-            )}
             {competitors.size > 0 && (
               <div className="competitors">
                 <div>
@@ -1093,7 +1073,7 @@ export default function Tool({
                   scrollTo(promptRef.current);
                 }}
               >
-                Run another batch
+                Run another question
                 <ArrowRight size={16} />
               </button>
               <a
@@ -1107,7 +1087,7 @@ export default function Tool({
                 className="secondary-button"
                 onClick={() =>
                   copy(
-                    `${check.brand.name}: ${summary?.score ?? "unavailable"}/100 across ${check.prompts?.length || 1} questions. Captured ${check.created_at}. Public browser snapshot, not a permanent ranking.`,
+                    `${check.brand.name}: ${summary?.score ?? "unavailable"}/100 for this question. Captured ${check.created_at}. Public browser snapshot, not a permanent ranking.`,
                   )
                 }
               >

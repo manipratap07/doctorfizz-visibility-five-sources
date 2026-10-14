@@ -156,8 +156,8 @@ Expected: an upload/build log and a production deployment URL. Wait for `Ready`.
 1. Refresh the production URL.
 2. Enter `itzfizz.com` or the business name `itzfizz` and prepare the profile.
 3. Confirm exactly five blank question fields, with no suggested questions or radio cards.
-4. Write five questions of your own (8–1,000 characters each). One can explicitly name `itzfizz` to check the direct-brand-query label.
-5. Select the sources that passed the VPS probe and click **Run my five questions**.
+4. Write one question of your own (8–1,000 characters). It can explicitly name `itzfizz` to check the direct-brand-query label.
+5. Select the sources that passed the VPS probe and click **Run this question**. Repeat one at a time for up to five free runs.
 6. Follow each question/source stage in **Live collection**. Five selected sources create 25 runs. The finished count must reflect actual completed/failed runs.
 7. Open answers as they finish, while other browser runs remain pending. Use the question tabs to check that answers belong to the right question.
 8. Check real captured text, citations (when present), source URL, timestamp and hash. A blocked or failed source must show its reason and have no invented answer.
