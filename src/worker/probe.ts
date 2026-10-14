@@ -28,6 +28,15 @@ async function main() {
         const result = await runBrowser(id, {
           prompt,
           signal: AbortSignal.timeout(timeoutMs),
+          onObservation: async (diagnostics) => {
+            console.log(
+              JSON.stringify({
+                event: "probe_observation",
+                provider: id,
+                diagnostics,
+              }),
+            );
+          },
           onProgress: async (phase) => {
             console.log(
               JSON.stringify({ event: "probe_progress", provider: id, phase }),

@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { runtimeInfo } from "../src/worker/runtime-info";
 import { definitions, checkDeadlineSeconds } from "../src/lib/providers.config";
 import type { Check } from "../src/lib/types";
+import { resolveBusinessPrompt } from "../src/lib/business-prompt";
 
 const arg = (name: string) =>
   process.argv
@@ -88,9 +89,9 @@ async function main() {
     }),
   );
   if (
-    health.release !== "1.5.1" ||
+    health.release !== "1.5.2" ||
     health.workers?.length !== 1 ||
-    !health.workers[0].name?.includes("doctorfizz-" + runtime.sourceHash)
+    !health.workers[0].name?.endsWith(":w:doctorfizz-" + runtime.sourceHash)
   )
     throw new Error(
       "Backend/worker mismatch. Confirm routing and the running image before sending a batch; do not stop unrelated containers.",
@@ -142,7 +143,11 @@ async function main() {
         check.runs.every(
           (r) =>
             r.provider_id === provider &&
-            r.prompt_text === prompts[r.prompt_index ?? -1] &&
+            r.prompt_text ===
+              resolveBusinessPrompt(
+                prompts[r.prompt_index ?? -1] || "",
+                profile.brand,
+              ).text &&
             r.status === "ok" &&
             !!r.analysis &&
             !!r.answer_text &&

@@ -70,6 +70,9 @@ services:
     environment:
       DATABASE_URL: postgresql://doctorfizz:${POSTGRES_PASSWORD}@postgres:5432/doctorfizz
       REDIS_URL: redis://redis:6379
+      BROWSER_STORAGE_STATE_DIR: /app/browser-sessions
+    volumes:
+      - ./browser-sessions:/app/browser-sessions:ro
     depends_on:
       migrate:
         condition: service_completed_successfully

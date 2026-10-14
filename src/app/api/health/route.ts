@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { hostname } from "node:os";
 import { redis, providerQueue } from "@/lib/redis";
+import { workerIdentity } from "@/lib/worker-identity";
 export async function GET(req: Request) {
   const forwarded = await relay(req);
   if (forwarded) return forwarded;
@@ -13,14 +14,12 @@ export async function GET(req: Request) {
     await redis().ping();
     const queue = providerQueue("browser");
     try {
-      const workers = (await queue.getWorkers()).map((worker) => ({
-        name: worker.name,
-      }));
+      const workers = (await queue.getWorkers()).map(workerIdentity);
       return NextResponse.json(
         {
           status: workers.length ? "ready" : "not_ready",
           service: "doctorfizz-llm-visibility",
-          release: "1.5.1",
+          release: "1.5.2",
           instance: hostname(),
           workers,
         },

@@ -4,6 +4,7 @@ import { aliases, matches } from "./analysis";
 import { checkDeadlineSeconds, providers } from "./providers.config";
 import { providerQueue, deadlineQueue } from "./redis";
 import { allowance } from "./limits";
+import { resolveBusinessPrompt } from "./business-prompt";
 import { z } from "zod";
 import type { Brand, Run, Check, BatchPrompt } from "./types";
 export async function createCheck(
@@ -43,17 +44,21 @@ export async function createCheck(
       )
     ).rows[0];
     if (!row) throw new Error("Your business profile was not found.");
-    const batch: BatchPrompt[] = texts.map((text, index) => ({
-      id: randomUUID(),
-      index,
-      text,
-      bias:
-        matches(text, aliases(row.brand)) ||
-        !!(
-          row.brand.domain &&
-          text.toLowerCase().includes(row.brand.domain.toLowerCase())
-        ),
-    }));
+    const batch: BatchPrompt[] = texts.map((original, index) => {
+      const resolved = resolveBusinessPrompt(original, row.brand);
+      const text = resolved.text;
+      return {
+        id: randomUUID(),
+        index,
+        ...resolved,
+        bias:
+          matches(text, aliases(row.brand)) ||
+          !!(
+            row.brand.domain &&
+            text.toLowerCase().includes(row.brand.domain.toLowerCase())
+          ),
+      };
+    });
     const selected = [...new Set(data.providers)].map((id) =>
       providers().find((p) => p.id === id && p.enabled),
     );

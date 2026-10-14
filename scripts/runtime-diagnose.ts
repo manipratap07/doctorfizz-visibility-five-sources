@@ -1,9 +1,13 @@
 /** Read-only. Never prints connection URLs, passwords, cookies, prompts or answer text. */
 import { runtimeInfo } from "../src/worker/runtime-info";
-import { proxyForProvider } from "../src/worker/browser-launch";
+import {
+  proxyForProvider,
+  storageStateForProvider,
+} from "../src/worker/browser-launch";
 import { providers } from "../src/lib/providers.config";
 import { query, pool } from "../src/lib/db";
 import { redis, providerQueue } from "../src/lib/redis";
+import { workerIdentity } from "../src/lib/worker-identity";
 async function main() {
   console.log(
     JSON.stringify({
@@ -14,6 +18,7 @@ async function main() {
         enabled: p.enabled,
         timeoutMs: p.timeoutMs,
         proxy: !!proxyForProvider(p.id),
+        savedSession: !!storageStateForProvider(p.id),
       })),
     }),
   );
@@ -22,7 +27,7 @@ async function main() {
     console.log(
       JSON.stringify({
         event: "queue",
-        workers: (await queue.getWorkers()).map((w) => ({ name: w.name })),
+        workers: (await queue.getWorkers()).map(workerIdentity),
         counts: await queue.getJobCounts(
           "active",
           "waiting",

@@ -63,7 +63,7 @@ const faq = [
   ],
   [
     "Can I write any five questions?",
-    "Yes. Write your own five questions, with 8 to 1,000 characters each. Questions naming your brand are labelled direct brand queries.",
+    "Yes. Write five questions with 8 to 1,000 characters each. Company references such as ‘we’ and ‘our company’ use your business profile and are labelled direct brand queries. General recommendation questions run without adding your brand.",
   ],
   [
     "What happens if a provider fails?",
@@ -665,14 +665,15 @@ export default function Tool({
                   >
                     {text.trim().length > 0 && text.trim().length < 8
                       ? "Add a little more detail: at least 8 characters."
-                      : "Your words are sent to each selected source."}
+                      : "Company references such as ‘we’ use your business profile."}
                   </span>
                 </label>
               ))}
             </div>
             <p className="secondary batch-input-note">
-              Questions that name your brand are marked as direct brand queries
-              in the results.
+              Questions that name your brand or refer to your company use your
+              business profile and are marked as direct brand queries. General
+              recommendation questions run without adding your brand.
             </p>
             <div className="selection-head">
               <div>
@@ -961,7 +962,9 @@ export default function Tool({
             </div>
             {(check.prompts?.[resultPrompt]?.bias ?? check.prompt_bias) && (
               <p className="batch-summary-note">
-                Direct brand query: this question explicitly names your brand.
+                Direct brand query: this question names your business or uses
+                your business profile. Compare it separately from unaided
+                discovery.
               </p>
             )}
             <div
@@ -1280,8 +1283,9 @@ export default function Tool({
                   </dl>
                   {(drawer.prompt_bias ?? check?.prompt_bias) && (
                     <p className="note">
-                      Direct brand query: the question explicitly names your
-                      brand. Compare it separately from unaided discovery.
+                      Direct brand query: the question names your business or
+                      uses your business profile. Compare it separately from
+                      unaided discovery.
                     </p>
                   )}
                   {drawer.browser_evidence?.pageUrl && (

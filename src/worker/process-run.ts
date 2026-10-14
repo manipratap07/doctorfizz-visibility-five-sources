@@ -54,6 +54,15 @@ export async function processBrowserRun(runId: string, checkId: string) {
   const result = await getAdapter(p.id).run({
     prompt: row.prompt_text,
     signal: AbortSignal.timeout(Math.min(p.timeoutMs, remaining)),
+    onObservation: async (diagnostics) => {
+      console.log(
+        JSON.stringify({
+          event: "browser_capture_observation",
+          ...context,
+          diagnostics,
+        }),
+      );
+    },
     onProgress: async (phase, message, url) => {
       console.log(
         JSON.stringify({ event: "browser_run_progress", ...context, phase }),

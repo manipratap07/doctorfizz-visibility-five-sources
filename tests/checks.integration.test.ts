@@ -69,6 +69,7 @@ vi.mock("../src/lib/redis", () => ({
 import { createCheck, finish, getCheck } from "../src/lib/checks";
 import { processBrowserRun } from "../src/worker/process-run";
 import { usage } from "../src/lib/limits";
+import { resolveBusinessPrompt } from "../src/lib/business-prompt";
 const visitor = randomUUID(),
   profile = randomUUID(),
   prompt = randomUUID();
@@ -300,7 +301,9 @@ it("dispatches all twenty distinct prompt/source runs and persists real stages a
   state.sent = [];
   state.observed = [];
   for (const run of check!.runs) await processBrowserRun(run.id, c.checkId);
-  expect(state.sent).toEqual(questions.flatMap((q) => Array(5).fill(q)));
+  expect(check!.prompts![4].originalText).toBe(questions[4]);
+  expect(check!.prompts![4].text).toContain("Demo (demo.test)");
+  expect(state.sent).toEqual(check!.prompts!.flatMap((q) => Array(5).fill(q.text)));
   expect(state.observed).toEqual(
     Array.from({ length: 25 }, () => [
       "opening",
@@ -398,4 +401,48 @@ it("all five real job-handler failures complete the batch and refund it without 
     ),
   ).toBe(true);
   expect(await usage(owner, "failure-fixture-ip")).toBe(5);
+});
+
+it("persists and sends resolved company questions consistently to every selected source", async () => {
+  const owner = randomUUID(),
+    site = randomUUID();
+  const brand = { name: "Itzfizz", domain: "itzfizz.com", aliases: [] };
+  await state.db.query("INSERT INTO visitors(id) VALUES($1)", [owner]);
+  await state.db.query(
+    "INSERT INTO site_profiles(id,visitor_id,brand,profile) VALUES($1,$2,$3,'{}')",
+    [site, owner, JSON.stringify(brand)],
+  );
+  const prompts = [
+    "where we rank in the it feild in bengaluru",
+    "What services does our company offer?",
+    "Which SEO agencies are recommended in Bengaluru?",
+    "Where does my website appear in AI recommendations?",
+    "What makes our agency different?",
+  ];
+  const created = await createCheck(owner, "context-fixture-ip", {
+    profileId: site,
+    prompts,
+    providers: ["gemini", "copilot"],
+    idempotencyKey: randomUUID(),
+  });
+  const before = (await getCheck(created.checkId))!;
+  expect(before.prompts![0].originalText).toBe(prompts[0]);
+  expect(before.prompts![0].contextApplied).toBe(true);
+  expect(before.prompts![2].bias).toBe(false);
+  const sentAt = state.sent.length;
+  for (const run of before.runs)
+    await processBrowserRun(run.id, created.checkId);
+  expect(state.sent.slice(sentAt)).toEqual(
+    prompts.flatMap((q) => Array(2).fill(resolveBusinessPrompt(q, brand).text)),
+  );
+  const after = (await getCheck(created.checkId))!;
+  expect(after.status).toBe("completed");
+  expect(
+    after.runs.every(
+      (r) => r.prompt_text === before.prompts![r.prompt_index!].text,
+    ),
+  ).toBe(true);
+  expect(
+    after.runs.filter((r) => r.prompt_index === 0).every((r) => r.prompt_bias),
+  ).toBe(true);
 });

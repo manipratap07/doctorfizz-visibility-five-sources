@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { proxyForProvider } from "../src/worker/browser-launch";
+import {
+  proxyForProvider,
+  storageStateForProvider,
+} from "../src/worker/browser-launch";
 afterEach(() => vi.unstubAllEnvs());
 it("does not proxy Gemini merely because a proxy credential exists", () => {
   vi.stubEnv("PROXY_PROVIDERS", "chatgpt, copilot");
@@ -36,4 +39,13 @@ it("rejects invalid configuration without exposing credentials", () => {
   );
   vi.stubEnv("RESIDENTIAL_PROXY_URL", "");
   expect(() => proxyForProvider("gemini")).toThrow("no proxy URL configured");
+});
+
+it("does not reuse an account unless the provider is explicitly selected", () => {
+  vi.stubEnv("BROWSER_SESSION_PROVIDERS", "gemini");
+  vi.stubEnv("BROWSER_STORAGE_STATE_DIR", "/missing-private-directory");
+  expect(storageStateForProvider("chatgpt")).toBeUndefined();
+  expect(() => storageStateForProvider("gemini")).toThrow(
+    /^The selected browser session could not be loaded/,
+  );
 });

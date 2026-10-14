@@ -31,6 +31,7 @@ export type RunPhase =
 export type BrowserInput = {
   prompt: string;
   signal: AbortSignal;
+  onObservation?: (diagnostics: CaptureDiagnostics) => Promise<void>;
   onProgress?: (
     phase: RunPhase,
     message: string,
@@ -41,16 +42,23 @@ export type BatchPrompt = {
   id: string;
   index: number;
   text: string;
+  originalText?: string;
+  contextApplied?: boolean;
   bias: boolean;
 };
+export type CaptureDiagnostics = {
+  phase: string;
+  answerRoots: number;
+  answerCharacters: number;
+  completionSeen: boolean;
+  generationSeen: boolean;
+  generatingNow?: boolean;
+  responseBusy?: boolean;
+  stablePolls?: number;
+  generationControl?: string;
+};
 export type ProviderResult = {
-  diagnostics?: {
-    phase: string;
-    answerRoots: number;
-    answerCharacters: number;
-    completionSeen: boolean;
-    generationSeen: boolean;
-  };
+  diagnostics?: CaptureDiagnostics;
   browserEvidence?: BrowserEvidence;
   status: "ok" | "timeout" | "blocked" | "rate_limited" | "error";
   answerText?: string;

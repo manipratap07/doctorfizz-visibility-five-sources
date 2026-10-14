@@ -1,6 +1,10 @@
 import { type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
-import type { ProviderResult, BrowserInput } from "../lib/types";
+import type {
+  ProviderResult,
+  BrowserInput,
+  CaptureDiagnostics,
+} from "../lib/types";
 import { browserTargets, type BrowserTarget } from "./browser.config";
 
 import { withBrowserPage } from "./browser-launch";
@@ -180,12 +184,16 @@ export async function collectOnPage(
 ): Promise<ProviderResult> {
   const start = Date.now();
   let phase = "opening";
-  const diagnostics = {
+  const diagnostics: CaptureDiagnostics = {
     phase,
     answerRoots: 0,
     answerCharacters: 0,
     completionSeen: false,
     generationSeen: false,
+    generatingNow: false,
+    responseBusy: false,
+    stablePolls: 0,
+    generationControl: "",
   };
   const failure = (
     status: ProviderResult["status"],
@@ -268,6 +276,7 @@ export async function collectOnPage(
     );
 
     let receivingReported = false;
+    let observedAt = 0;
     let previous = "",
       stable = 0,
       sawGenerating = false,
@@ -307,9 +316,31 @@ export async function collectOnPage(
       if (text.length > 60000)
         return failure("error", "The answer exceeded the capture limit.");
 
-      const generating = await visible(page, target.stop);
+      const stopControl = page
+        .locator(target.stop)
+        .and(page.locator(':not(:disabled):not([aria-disabled="true"])'))
+        .filter({ visible: true })
+        .first();
+      const generating =
+        (await stopControl.isVisible()) && (await stopControl.isEnabled());
       sawGenerating ||= generating;
       diagnostics.generationSeen = sawGenerating;
+      diagnostics.generatingNow = generating;
+      diagnostics.generationControl = generating
+        ? (
+            (await stopControl.getAttribute("aria-label")) ||
+            (await stopControl.getAttribute("data-test-id")) ||
+            "generation control"
+          ).slice(0, 100)
+        : "";
+      const responseBusy =
+        count > before &&
+        (await answer.evaluate(
+          (root) =>
+            root.getAttribute("aria-busy") === "true" ||
+            !!root.querySelector('[aria-busy="true"]'),
+        ));
+      diagnostics.responseBusy = responseBusy;
 
       // Copy control must belong to the captured answer, not an old answer/page header.
       const controls =
@@ -319,18 +350,30 @@ export async function collectOnPage(
             ? answer.locator(target.completionAncestor)
             : answer;
 
+      const completionControl = controls
+        .locator(target.completion)
+        .and(page.locator(':not(:disabled):not([aria-disabled="true"])'))
+        .filter({ visible: true })
+        .first();
       const complete =
         count > before &&
-        (await controls
-          .locator(target.completion)
-          .filter({ visible: true })
-          .first()
-          .isVisible()
-          .catch(() => false));
+        (await completionControl.isVisible()) &&
+        (await completionControl.isEnabled());
 
       diagnostics.completionSeen = complete;
-      stable = text && text === previous && !generating ? stable + 1 : 0;
-      previous = text;
+      // Rendering whitespace can change after generation has finished.
+      // Compare semantic text while preserving the captured answer formatting.
+      const comparable = text.replace(/\s+/g, " ").trim();
+      stable =
+        comparable && comparable === previous && !generating && !responseBusy
+          ? stable + 1
+          : 0;
+      previous = comparable;
+      diagnostics.stablePolls = stable;
+      if (input.onObservation && Date.now() - observedAt >= 5000) {
+        observedAt = Date.now();
+        await input.onObservation({ ...diagnostics, phase });
+      }
 
       if (
         text.trim().length >= 20 &&

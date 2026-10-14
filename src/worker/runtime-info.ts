@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
-export const ADAPTER_VERSION = "browser-1.5.1";
+export const ADAPTER_VERSION = "browser-1.5.2";
 let cached: {
   adapterVersion: string;
   sourceHash: string;
@@ -18,6 +18,8 @@ export function runtimeInfo() {
     "src/worker/process-run.ts",
     "src/worker/index.ts",
     "src/lib/providers.config.ts",
+    "src/lib/business-prompt.ts",
+    "src/lib/worker-identity.ts",
     "package-lock.json",
   ]) {
     hash.update(path);

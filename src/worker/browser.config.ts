@@ -40,9 +40,10 @@ export const browserTargets: Record<string, BrowserTarget> = {
       'model-response,[data-test-id="model-response"],[data-testid="assistant-message"]',
     answerText:
       'message-content,.model-response-text,[data-testid="answer-text"]',
-    completion: 'button[aria-label="Copy"]',
-    completionScope: "page",
-    stop,
+    completion: copy,
+    completionScope: "answer",
+    // Stop reading/audio controls are unrelated to response generation.
+    stop: 'button[aria-label="Stop" i],button[aria-label="Stop response" i],button[aria-label="Stop generating" i],button[data-test-id="stop-button"],button[data-test-id="stop-response-button"],button:has(mat-icon:text-is("stop")):not([aria-label*="read" i]):not([aria-label*="audio" i]):not([title*="read" i]):not([title*="audio" i])',
     model:
       '[data-test-id="bard-mode-menu-button"],button:has-text("Flash-Lite")',
     search: "text=/^Searching the web$/i",
