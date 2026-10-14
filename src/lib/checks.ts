@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { brandSalt, hashBrandKey } from "./brand-key";
 import { pool, query } from "./db";
 import { brandMatches } from "./analysis";
+import { resolveBusinessPrompt } from "./business-prompt";
 import { checkDeadlineSeconds, providers } from "./providers.config";
 import { providerQueue, deadlineQueue } from "./redis";
 import { allowance } from "./limits";
@@ -50,17 +51,23 @@ export async function createCheck(
       )
     ).rows[0];
     if (!row) throw new Error("Your business profile was not found.");
-    const batch: BatchPrompt[] = texts.map((text, index) => ({
-      id: randomUUID(),
-      index,
-      text,
-      bias:
-        brandMatches(text, row.brand) ||
-        !!(
-          row.brand.domain &&
-          text.toLowerCase().includes(row.brand.domain.toLowerCase())
-        ),
-    }));
+    // "we/our company" questions get the business name so every source knows
+    // who is asking; the original wording is kept for display.
+    const batch: BatchPrompt[] = texts.map((original, index) => {
+      const resolved = resolveBusinessPrompt(original, row.brand);
+      const text = resolved.text;
+      return {
+        id: randomUUID(),
+        index,
+        ...resolved,
+        bias:
+          brandMatches(text, row.brand) ||
+          !!(
+            row.brand.domain &&
+            text.toLowerCase().includes(row.brand.domain.toLowerCase())
+          ),
+      };
+    });
     const selected = [...new Set(data.providers)].map((id) =>
       providers().find((p) => p.id === id && p.enabled),
     );

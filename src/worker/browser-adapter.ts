@@ -2,10 +2,15 @@ import type { BrowserContext, Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ProviderResult, BrowserInput } from "../lib/types";
+import type {
+  ProviderResult,
+  BrowserInput,
+  CaptureDiagnostics,
+} from "../lib/types";
 import { browserTargets, type BrowserTarget } from "./browser.config";
-import { launchContext } from "./launch";
+import { egressIp, launchContext } from "./launch";
 import { toCitations } from "./citations";
+import { ADAPTER_VERSION } from "./runtime-info";
 
 export const CHALLENGE_REASON =
   "The provider displayed a security verification page; no answer was collected.";
@@ -29,13 +34,27 @@ function urlParts(raw: string) {
 const isChallengePath = (raw: string) =>
   /\/sorry\/|\/cdn-cgi\/challenge-platform\//i.test(urlParts(raw).path);
 
+// Page reads may fail while a provider navigates or re-renders; those are
+// retried on the next poll. Anything else (a bad selector, a script error such
+// as the old "__name is not defined") is a bug and must surface as an error,
+// not be swallowed into a silent timeout.
+const TRANSIENT =
+  /timeout|execution context was destroyed|frame (?:was|got) detached|not attached to the dom|target page, context or browser has been closed|has been closed|navigat/i;
+const soft =
+  <T>(fallback: T) =>
+  (e: unknown): T => {
+    if (TRANSIENT.test(e instanceof Error ? e.message : String(e)))
+      return fallback;
+    throw e;
+  };
+
 const visible = async (page: Page, selector: string) =>
   page
     .locator(selector)
     .filter({ visible: true })
     .first()
     .isVisible()
-    .catch(() => false);
+    .catch(soft(false));
 
 const INTERFACE_TEXT = new Function(
   "body",
@@ -238,6 +257,13 @@ export async function collectOnPage(
   input: BrowserInput,
 ): Promise<ProviderResult> {
   const start = Date.now();
+  const diagnostics: CaptureDiagnostics = {
+    phase: "opening",
+    answerRoots: 0,
+    answerCharacters: 0,
+    completionSeen: false,
+    generationSeen: false,
+  };
   const failure = (
     status: ProviderResult["status"],
     errorReason: string,
@@ -246,6 +272,7 @@ export async function collectOnPage(
     errorReason,
     webSearchUsed: false,
     latencyMs: Date.now() - start,
+    diagnostics: { ...diagnostics },
   });
 
   page.setDefaultTimeout(6000);
@@ -318,6 +345,7 @@ export async function collectOnPage(
       "Question sent; waiting for the provider to answer.",
       page.url(),
     );
+    diagnostics.phase = "waiting";
 
     let receivingReported = false;
     let previous = "",
@@ -343,12 +371,13 @@ export async function collectOnPage(
       // Never let one poll block on a text root that has not rendered yet.
       const text =
         count > before &&
-        (!target.answerText || (await contents.count().catch(() => 0)) > 0)
-          ? await readVisibleAnswer(contents).catch(() => "")
+        (!target.answerText || (await contents.count().catch(soft(0))) > 0)
+          ? await readVisibleAnswer(contents).catch(soft(""))
           : "";
 
       if (text && !receivingReported) {
         receivingReported = true;
+        diagnostics.phase = "collecting";
         await input.onProgress?.(
           "collecting",
           "Receiving answer text from this source.",
@@ -370,17 +399,36 @@ export async function collectOnPage(
             ? answer.locator(target.completionAncestor)
             : answer;
 
+      // A disabled control (e.g. Copy greyed out while streaming) is not completion.
+      const control = controls
+        .locator(target.completion)
+        .filter({ visible: true })
+        .first();
       const complete =
         count > before &&
-        (await controls
-          .locator(target.completion)
-          .filter({ visible: true })
-          .first()
-          .isVisible()
-          .catch(() => false));
+        (await control.isVisible().catch(soft(false))) &&
+        (await control.isEnabled({ timeout: 500 }).catch(soft(false)));
 
-      stable = text && text === previous && !generating ? stable + 1 : 0;
-      previous = text;
+      // Whitespace-only re-renders do not count as the answer still changing.
+      const settled = text.replace(/\s+/g, " ").trim();
+      stable = settled && settled === previous && !generating ? stable + 1 : 0;
+      previous = settled;
+      Object.assign(diagnostics, {
+        answerRoots: count,
+        answerCharacters: text.length,
+        completionSeen: diagnostics.completionSeen || complete,
+        generationSeen: sawGenerating,
+        generatingNow: generating,
+        stablePolls: stable,
+        generationControl: generating
+          ? ((await page
+              .locator(target.stop)
+              .filter({ visible: true })
+              .first()
+              .getAttribute("aria-label")
+              .catch(soft(null))) ?? undefined)
+          : undefined,
+      });
       if (process.env.BROWSER_DEBUG)
         console.error(
           JSON.stringify({
@@ -434,11 +482,13 @@ export async function collectOnPage(
               .filter({ visible: true })
               .first()
               .innerText({ timeout: 1500 })
-              .catch(() => "")
+              .catch(soft(""))
           : "";
 
+        diagnostics.phase = "completed";
         return {
           status: "ok",
+          diagnostics: { ...diagnostics },
           answerText: text,
           citations,
           modelReported: model.slice(0, 100) || undefined,
@@ -446,7 +496,7 @@ export async function collectOnPage(
           latencyMs: Date.now() - start,
           browserEvidence: {
             captureMethod: "visible_dom",
-            adapterVersion: "browser-1.6",
+            adapterVersion: ADAPTER_VERSION,
             pageUrl: page.url(),
             capturedAt: new Date().toISOString(),
             answerHash: createHash("sha256").update(text).digest("hex"),
@@ -521,6 +571,23 @@ async function runOnce(
   const abort = () => void close();
   input.signal.addEventListener("abort", abort, { once: true });
   try {
+    // With a required proxy, prove this run's exit IP is not the VPS before
+    // any provider page is opened.
+    if (process.env.REQUIRE_PROXY === "true" && process.env.VPS_PUBLIC_IP) {
+      const exit = await egressIp(context).catch(() => "");
+      console.log(
+        JSON.stringify({ event: "browser_egress", provider: id, egressIp: exit }),
+      );
+      if (!exit || exit === process.env.VPS_PUBLIC_IP)
+        return {
+          status: "error",
+          errorReason: exit
+            ? "The proxy exit IP is the VPS address; refusing to browse without the residential proxy."
+            : "The residential proxy exit could not be verified.",
+          webSearchUsed: false,
+          latencyMs: 0,
+        };
+    }
     const page = context.pages()[0] ?? (await context.newPage());
     const result = await collectOnPage(page, target, input);
     if (result.status !== "ok" && process.env.BROWSER_DEBUG)

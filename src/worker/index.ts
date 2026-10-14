@@ -5,6 +5,7 @@ import { query, pool } from "../lib/db";
 import { processBrowserRun } from "./process-run";
 import { finish, enqueue } from "../lib/checks";
 import { launchContext, egressIp, sweepProfiles } from "./launch";
+import { runtimeInfo } from "./runtime-info";
 const log = pino({ redact: ["key", "token", "ip"] });
 const workers: Worker[] = [];
 async function startup() {
@@ -16,6 +17,9 @@ async function startup() {
       await finish(job.data.checkId, true);
     },
     { connection: redis(), concurrency: 10 },
+  );
+  deadline.on("error", (error) =>
+    log.error({ event: "deadline_queue_error", message: error.message }),
   );
   workers.push(deadline);
   let reconciling = false;
@@ -103,7 +107,18 @@ async function startup() {
     async (job) => {
       await processBrowserRun(job.data.runId, job.data.checkId);
     },
-    { connection: redis(), concurrency: 1 },
+    {
+      connection: redis(),
+      concurrency: 1,
+      // The source hash shows in /api/health which build is processing jobs.
+      name: "doctorfizz-" + runtimeInfo().sourceHash,
+    },
+  );
+  worker.on("error", (error) =>
+    log.error({ event: "browser_queue_error", message: error.message }),
+  );
+  worker.on("stalled", (jobId) =>
+    log.warn({ event: "browser_job_stalled", jobId }),
   );
   // Synchronous listener: an async one that throws (e.g. Postgres is down
   // while a job fails) becomes an unhandled rejection that kills the worker.
@@ -124,7 +139,7 @@ async function startup() {
     );
   });
   workers.push(worker);
-  log.info({ event: "worker_ready" });
+  log.info({ event: "worker_ready", ...runtimeInfo() });
 }
 startup().catch((e) => {
   log.error({ event: "startup_failed", message: e.message });

@@ -41,7 +41,7 @@ python3 -c 'import json; print(json.load(open("/root/doctorfizz-v16/package.json
 Expected: 1.6.0. Before upgrading, put the residential proxy in the existing VPS `.env` (the upgrade keeps values that are already there, and the worker reads `.env` only when its container is created):
 
 ```bash
-nano /opt/doctorfizz-llm-visibility/doctorfizz-visibility/.env
+nano /root/doctorfizz-visibility-five-sources/.env
 ```
 
 Add or edit these two lines with your proxy provider's HTTP gateway. Keep the literal text `{session}` where your provider expects a sticky-session id (for example Bright Data `-session-{session}`, Oxylabs `-sessid-{session}`); the worker replaces it with a new id for every run:
@@ -57,27 +57,27 @@ Then, when no DoctorFizz check is currently running:
 bash /root/doctorfizz-v16/deploy/upgrade-vps.sh
 ```
 
-Expected: backup confirmation, Docker builds (the first build also installs Google Chrome), healthy PostgreSQL/Redis and started web/worker. The script retains runtime secrets/database volumes and only upgrades doctorfizz-llm. Do not use Docker down/prune or remove volumes.
+Expected: backup confirmation, Docker builds (the first build also installs Google Chrome), healthy PostgreSQL/Redis and started web/worker. The script retains runtime secrets/database volumes and only upgrades doctorfizz-visibility-five-sources. Do not use Docker down/prune or remove volumes.
 
 ## 3. Verify the backend, the proxy and each source
 
 In the VPS SSH terminal:
 
 ```bash
-cd /opt/doctorfizz-llm-visibility/doctorfizz-visibility
-docker compose -p doctorfizz-llm exec -T web node -e 'fetch("http://127.0.0.1:3000/api/health",{headers:{"x-doctorfizz-backend-key":process.env.BACKEND_SHARED_SECRET}}).then(async r=>{console.log("HTTP",r.status);console.log(await r.text())}).catch(e=>{console.error(e.message);process.exit(1)})'
+cd /root/doctorfizz-visibility-five-sources
+docker compose -p doctorfizz-visibility-five-sources exec -T web node -e 'fetch("http://127.0.0.1:3000/api/health",{headers:{"x-doctorfizz-backend-key":process.env.BACKEND_SHARED_SECRET}}).then(async r=>{console.log("HTTP",r.status);console.log(await r.text())}).catch(e=>{console.error(e.message);process.exit(1)})'
 ```
 
 Expected: HTTP 200 and {"status":"ready"}. This checks the app/database, not external LLM availability.
 
 ```bash
-docker compose -p doctorfizz-llm logs worker | grep browser_egress
+docker compose -p doctorfizz-visibility-five-sources logs worker | grep browser_egress
 ```
 
-Expected: `"proxy":true` and an `egressIp` that is **not** 187.127.186.47. If it shows the VPS IP, the proxy is not applied: fix `.env`, then run `docker compose -p doctorfizz-llm up -d --no-deps worker` (a plain restart or exec does not reload `.env`) and check again.
+Expected: `"proxy":true` and an `egressIp` that is **not** 187.127.186.47. If it shows the VPS IP, the proxy is not applied: fix `.env`, then run `docker compose -p doctorfizz-visibility-five-sources up -d --no-deps worker` (a plain restart or exec does not reload `.env`) and check again.
 
 ```bash
-docker compose -p doctorfizz-llm exec -T worker npm run browser:probe -- --provider=gemini --submit
+docker compose -p doctorfizz-visibility-five-sources exec -T worker npm run browser:probe -- --provider=gemini --submit
 ```
 
 Repeat with `--provider=chatgpt` and `--provider=google-ai`. Expected acceptance for each: status ready plus browser evidence. If it fails, run browser:inspect as described in README.md and adjust selectors against real DOM; do not call the collector working yet.
@@ -122,14 +122,14 @@ The shared secret is necessary to connect your frontend securely to your backend
 Once Vercel assigns the new production domain, set APP_URL to that exact origin in Vercel and redeploy if necessary. The **VPS APP_URL must also match this new frontend**. On the VPS edit its .env privately:
 
 ```bash
-cd /opt/doctorfizz-llm-visibility/doctorfizz-visibility
+cd /root/doctorfizz-visibility-five-sources
 nano .env
 ```
 
 Change only APP_URL to the new production origin. Keep BACKEND_URL empty, BACKEND_AUTH_REQUIRED=true and all existing runtime secrets unchanged. Save Ctrl+O, Enter; exit Ctrl+X.
 
 ```bash
-docker compose -p doctorfizz-llm up -d --no-deps web worker
+docker compose -p doctorfizz-visibility-five-sources up -d --no-deps web worker
 ```
 
 This moves the existing DoctorFizz backend's allowed frontend origin to the new domain; the old frontend's write requests will then fail origin checks. Rank/SEO tools are unaffected. To preserve the old DoctorFizz frontend simultaneously you would need an explicitly configured multi-origin deployment or separate backend; do not silently weaken the origin check.

@@ -4,7 +4,7 @@ For the new flat-root ZIP and a new GitHub/Vercel project, follow ../START_HERE.
 
 # Upgrade your existing VPS + Vercel app
 
-This guide is for your existing server **187.127.186.47**, app folder **/opt/doctorfizz-llm-visibility/doctorfizz-visibility**, Compose project **doctorfizz-llm**, backend **https://llm.187-127-186-47.sslip.io**, and frontend **https://doctorfizz-visibility.vercel.app**.
+This guide is for your existing server **187.127.186.47**, app folder **/root/doctorfizz-visibility-five-sources**, Compose project **doctorfizz-visibility-five-sources**, backend **https://llm.187-127-186-47.sslip.io**, and frontend **https://doctorfizz-visibility.vercel.app**.
 
 ## 1. Download and transfer the ZIP
 
@@ -53,7 +53,7 @@ RESIDENTIAL_PROXY_URL=http://USER-session-{session}:PASS@GATEWAY:PORT
 REQUIRE_PROXY=true
 ```
 
-Keep the literal `{session}` where your provider expects a sticky-session id. If you add the proxy later instead, run `docker compose -p doctorfizz-llm up -d --no-deps worker` afterwards; a plain restart does not reload `.env`.
+Keep the literal `{session}` where your provider expects a sticky-session id. If you add the proxy later instead, run `docker compose -p doctorfizz-visibility-five-sources up -d --no-deps worker` afterwards; a plain restart does not reload `.env`.
 
 Run:
 
@@ -69,15 +69,15 @@ Expected, in order:
 - `migrate` finishes with `Schema ready.` (may appear in service logs rather than the detached startup output).
 - PostgreSQL and Redis remain healthy; web/worker start. Web maps `127.0.0.1:8089->3000/tcp`.
 - `Browser upgrade started. Next run the health check...`
-- `docker compose -p doctorfizz-llm logs worker | grep browser_egress` shows `"proxy":true` and an `egressIp` that is not 187.127.186.47.
+- `docker compose -p doctorfizz-visibility-five-sources logs worker | grep browser_egress` shows `"proxy":true` and an `egressIp` that is not 187.127.186.47.
 
 The script stops if backup/config/build fails. It does not run `docker compose down`, `docker system prune`, remove volumes, edit Caddy or affect `seo-analyzer-vps`/your port-3000 rank worker. Running DoctorFizz checks should finish before you upgrade its worker.
 
 ## 4. Check local backend health
 
 ```bash
-cd /opt/doctorfizz-llm-visibility/doctorfizz-visibility
-docker compose -p doctorfizz-llm exec -T web node -e 'fetch("http://127.0.0.1:3000/api/health",{headers:{"x-doctorfizz-backend-key":process.env.BACKEND_SHARED_SECRET},signal:AbortSignal.timeout(10000)}).then(async r=>{console.log("HTTP",r.status);console.log(await r.text())}).catch(e=>{console.error(e.message);process.exit(1)})'
+cd /root/doctorfizz-visibility-five-sources
+docker compose -p doctorfizz-visibility-five-sources exec -T web node -e 'fetch("http://127.0.0.1:3000/api/health",{headers:{"x-doctorfizz-backend-key":process.env.BACKEND_SHARED_SECRET},signal:AbortSignal.timeout(10000)}).then(async r=>{console.log("HTTP",r.status);console.log(await r.text())}).catch(e=>{console.error(e.message);process.exit(1)})'
 ```
 
 Expected:
@@ -90,7 +90,7 @@ HTTP 200
 If startup is still in progress, rerun after it finishes. A public health request without the backend key still returns **401**, intentionally.
 
 ```bash
-docker compose -p doctorfizz-llm logs --tail=40 worker
+docker compose -p doctorfizz-visibility-five-sources logs --tail=40 worker
 ```
 
 Expected: a JSON log containing `"event":"worker_ready"`. Any database/Redis/browser-start error needs investigation before using the tool.
@@ -100,7 +100,7 @@ Expected: a JSON log containing `"event":"worker_ready"`. Any database/Redis/bro
 First, detect guest chat inputs without submitting a question:
 
 ```bash
-docker compose -p doctorfizz-llm exec -T worker npm run browser:probe
+docker compose -p doctorfizz-visibility-five-sources exec -T worker npm run browser:probe
 ```
 
 Expected: one JSON line per provider. `input_found` means an input was detected, **not** that answers can be captured. `blocked`/`error` includes the observed reason.
@@ -108,7 +108,7 @@ Expected: one JSON line per provider. `input_found` means an input was detected,
 Then perform the actual acceptance test:
 
 ```bash
-docker compose -p doctorfizz-llm exec -T worker npm run browser:probe -- --submit
+docker compose -p doctorfizz-visibility-five-sources exec -T worker npm run browser:probe -- --submit
 ```
 
 This submits one non-sensitive sample question per source (ChatGPT, Gemini, Google AI Mode), sequentially, and may take up to five minutes. First check the worker log for `"event":"browser_egress"`: the `egressIp` must be a residential proxy address, not the VPS IP.
@@ -127,7 +127,7 @@ To disable failed candidates, edit only `BROWSER_DISABLED_PROVIDERS` in `.env`, 
 
 ```bash
 nano .env
-docker compose -p doctorfizz-llm up -d --no-deps web worker
+docker compose -p doctorfizz-visibility-five-sources up -d --no-deps web worker
 ```
 
 Expected: updated containers start; disabled choices are labelled disabled. This environment-only change does not require a rebuild. Never share `.env` output.
@@ -182,4 +182,4 @@ A success requires actual provider answers, not merely a `Ready` Vercel deployme
 
 Use the backup path printed by the upgrade. Its source archive includes the previous `.env`; the database dump is retained as an additional backup. Since migrations are additive, a code rollback normally does not require database restoration.
 
-Extract the backup source to a separate review folder first. Copy it back to this DoctorFizz app and rebuild/recreate only `doctorfizz-llm` web/worker. Do not restore or delete unrelated VPS containers. If database restoration is needed, review it separately because it can overwrite newer DoctorFizz data.
+Extract the backup source to a separate review folder first. Copy it back to this DoctorFizz app and rebuild/recreate only `doctorfizz-visibility-five-sources` web/worker. Do not restore or delete unrelated VPS containers. If database restoration is needed, review it separately because it can overwrite newer DoctorFizz data.

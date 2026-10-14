@@ -54,7 +54,7 @@ Folder: `~/DoctorFizz_LLM_Visibility_fixed`, branch `fix/browser-detection`. Com
 | 15 | Critical | Headless mode (user agent mein khud "HeadlessChrome" likha hota hai) | Asli Google Chrome headed mode mein, Xvfb virtual display par, container ke andar. Kisi ki screen par kuch nahi khulta |
 | 16 | Critical | `--disable-gpu` ki wajah se WebGL "SwiftShader" dikhta tha | Flag hata diya |
 | 17 | Critical | "Stealth" script (`plugins=[1,2,3]`, `webdriver` override) ulta bot signal deta tha | Script hata diya |
-| 18 | High | Timezone UTC, locale en-US, jabki proxy ka IP India ka hai | `BROWSER_TIMEZONE=Asia/Kolkata`, `BROWSER_LOCALE=en-IN` |
+| 18 | High | Timezone UTC, locale en-US, jabki proxy ka IP India ka hai | `BROWSER_TIMEZONE_ID=Asia/Kolkata`, `BROWSER_LOCALE=en-IN` |
 | 19 | High | Proxy chupchap optional tha, aur VPS IP se chalne par koi log nahi aata tha | `REQUIRE_PROXY`, aur startup par `browser_egress` log mein exit IP |
 | 20 | High | `host:port` ya `user:pass@host:port` proxy URL par port/credentials gum ho jaate the, ya worker crash hota tha | Scheme apne aap judta hai, galat URL par saaf error |
 | 21 | High | SOCKS proxy username/password ke saath Chromium mein chalta hi nahi | Saaf error message |
@@ -117,11 +117,11 @@ Folder: `~/DoctorFizz_LLM_Visibility_fixed`, branch `fix/browser-detection`. Com
 2. `DoctorFizz_LLM_Visibility_Checker_v1_6.zip` VPS par upload karo, aur `START_HERE.md` ke steps se `deploy/upgrade-vps.sh` chalao. Pehli build mein Google Chrome install hone ki wajah se zyada time lagega.
 3. Exit IP check karo. Ye VPS ka `187.127.186.47` **nahi** hona chahiye:
    ```bash
-   docker compose -p doctorfizz-llm logs worker | grep browser_egress
+   docker compose -p doctorfizz-visibility-five-sources logs worker | grep browser_egress
    ```
 4. Har source ka probe chalao:
    ```bash
-   docker compose -p doctorfizz-llm exec -T worker npm run browser:probe -- --provider=chatgpt --submit
+   docker compose -p doctorfizz-visibility-five-sources exec -T worker npm run browser:probe -- --provider=chatgpt --submit
    ```
    Isi tarah `gemini` aur `google-ai` ke liye bhi. Fail ho to `-e BROWSER_DEBUG=1` lagakar dobara chalao; har poll log hoga aur `internal-debug/` mein screenshot + HTML save hoga.
 5. Vercel par bhi yahi version deploy karo, kyunki UI ab 3 sources dikhata hai.

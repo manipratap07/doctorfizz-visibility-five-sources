@@ -22,7 +22,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 import type { Brand, SiteProfile, Check, Run } from "@/lib/types";
-import { summarize, brandMatches } from "@/lib/analysis";
+import { summarize } from "@/lib/analysis";
+import { resolveBusinessPrompt } from "@/lib/business-prompt";
 import { weights } from "@/lib/scoring.config";
 type Provider = {
   id: string;
@@ -695,10 +696,8 @@ export default function Tool({
                     {text.trim().length > 0 && text.trim().length < 8
                       ? "Add a little more detail: at least 8 characters."
                       : brand &&
-                          (/\b(we|our|ours)\b/i.test(text) ||
-                            /\b[Uu]s\b/.test(text)) &&
-                          !brandMatches(text, brand)
-                        ? `The AI source cannot tell who "we" is. Name ${brand.name || "your brand"} or ask a neutral question like "best IT companies in Bengaluru".`
+                          resolveBusinessPrompt(text, brand).contextApplied
+                        ? `We'll tell each source that "we" means ${brand.name}. Add a neutral question too, e.g. "best IT companies in Bengaluru".`
                         : "Your words are sent to each selected source."}
                   </span>
                 </label>
@@ -983,12 +982,20 @@ export default function Tool({
             </div>
             <div className="used-prompt">
               <span className="mono">QUESTION {resultPrompt + 1}</span>
-              <p>{check.prompts?.[resultPrompt]?.text || check.prompt_text}</p>
+              <p>
+                {check.prompts?.[resultPrompt]?.originalText ||
+                  check.prompts?.[resultPrompt]?.text ||
+                  check.prompt_text}
+              </p>
               <button
                 className="icon-button"
                 aria-label="Copy tested question"
                 onClick={() =>
-                  copy(check.prompts?.[resultPrompt]?.text || check.prompt_text)
+                  copy(
+                    check.prompts?.[resultPrompt]?.originalText ||
+                      check.prompts?.[resultPrompt]?.text ||
+                      check.prompt_text,
+                  )
                 }
               >
                 <Copy size={15} />
@@ -996,7 +1003,9 @@ export default function Tool({
             </div>
             {(check.prompts?.[resultPrompt]?.bias ?? check.prompt_bias) && (
               <p className="batch-summary-note">
-                Direct brand query: this question explicitly names your brand.
+                {check.prompts?.[resultPrompt]?.contextApplied
+                  ? `Direct brand query: your business name was added so each source knows who "we" is. Open a response to see the exact text sent.`
+                  : "Direct brand query: this question explicitly names your brand."}
               </p>
             )}
             <div

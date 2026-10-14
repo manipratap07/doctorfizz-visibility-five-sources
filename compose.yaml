@@ -76,6 +76,8 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    init: true
+    stop_grace_period: 110s
     mem_limit: 2g
     shm_size: 1gb
 volumes:

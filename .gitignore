@@ -12,4 +12,6 @@ playwright-report
 test-results
 *.tsbuildinfo
 internal-debug
+browser-sessions
+browser-profiles
 docs/qa-*.png

@@ -26,7 +26,10 @@ RUN npx playwright install --with-deps chrome \
   && apt-get update && apt-get install -y --no-install-recommends xvfb \
   && rm -rf /var/lib/apt/lists/*
 COPY --chown=dfworker:dfworker . .
-RUN mkdir -p internal-debug && chown dfworker:dfworker internal-debug
+RUN mkdir -p internal-debug /app/.config /app/.cache /app/.local/share \
+  && chown -R dfworker:dfworker internal-debug /app/.config /app/.cache /app/.local
+# Chrome writes crash reports and caches under XDG folders of the worker user.
+ENV XDG_CONFIG_HOME=/app/.config XDG_CACHE_HOME=/app/.cache XDG_DATA_HOME=/app/.local/share
 # DISPLAY is image-wide so `docker compose exec worker npm run browser:probe` also finds Xvfb.
 ENV NODE_ENV=production DISPLAY=:99
 USER dfworker

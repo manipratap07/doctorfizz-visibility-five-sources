@@ -34,6 +34,7 @@ export type BrowserInput = {
   // Epoch ms when `signal` fires. The adapter stops polling a little earlier so
   // it can return a clean timeout instead of being torn down mid-call.
   deadlineAt?: number;
+  onObservation?: (diagnostics: CaptureDiagnostics) => Promise<void>;
   onProgress?: (
     phase: RunPhase,
     message: string,
@@ -44,9 +45,24 @@ export type BatchPrompt = {
   id: string;
   index: number;
   text: string;
+  // Set when "we/our" references were resolved with the business context.
+  originalText?: string;
+  contextApplied?: boolean;
   bias: boolean;
 };
+// Where a capture stood when it ended; logged by the worker for failed runs.
+export type CaptureDiagnostics = {
+  phase: string;
+  answerRoots: number;
+  answerCharacters: number;
+  completionSeen: boolean;
+  generationSeen: boolean;
+  generatingNow?: boolean;
+  stablePolls?: number;
+  generationControl?: string;
+};
 export type ProviderResult = {
+  diagnostics?: CaptureDiagnostics;
   browserEvidence?: BrowserEvidence;
   status: "ok" | "timeout" | "blocked" | "rate_limited" | "error";
   answerText?: string;

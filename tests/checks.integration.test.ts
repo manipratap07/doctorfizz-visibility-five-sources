@@ -2,6 +2,7 @@ import { beforeAll, afterAll, it, expect, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { readFileSync } from "node:fs";
 import { hashBrandKey, hashLegacyUsageDomains } from "../src/lib/brand-key";
+import { resolveBusinessPrompt } from "../src/lib/business-prompt";
 import { randomUUID } from "node:crypto";
 const state = vi.hoisted(() => ({
   db: null as unknown as PGlite,
@@ -397,4 +398,52 @@ it("hashes legacy plaintext usage domains once, matching new brand keys", async 
   ).rows;
   expect(hashed.domain).toBe(hashBrandKey("legacy.example", salt));
   expect(await hashLegacyUsageDomains(run, salt)).toBe(0);
+});
+
+it("persists and sends resolved company questions consistently to every selected source", async () => {
+  const owner = randomUUID(),
+    site = randomUUID();
+  const brand = { name: "Itzfizz", domain: "itzfizz.com", aliases: [] };
+  await state.db.query("INSERT INTO visitors(id) VALUES($1)", [owner]);
+  await state.db.query(
+    "INSERT INTO site_profiles(id,visitor_id,brand,profile) VALUES($1,$2,$3,'{}')",
+    [site, owner, JSON.stringify(brand)],
+  );
+  const prompts = [
+    "where we rank in the it feild in bengaluru",
+    "Which SEO agencies are recommended in Bengaluru?",
+  ];
+  const created = await createCheck(owner, "context-fixture-ip", {
+    profileId: site,
+    prompts,
+    providers: ["gemini", "chatgpt"],
+    idempotencyKey: randomUUID(),
+  });
+  const before = (await getCheck(created.checkId))!;
+  expect(before.prompts![0]).toMatchObject({
+    originalText: prompts[0],
+    contextApplied: true,
+    bias: true,
+  });
+  expect(before.prompts![0].text).toContain("Itzfizz (itzfizz.com)");
+  // A neutral question is sent unchanged and is not a brand query.
+  expect(before.prompts![1].text).toBe(prompts[1]);
+  expect(before.prompts![1].contextApplied).toBeUndefined();
+  expect(before.prompts![1].bias).toBe(false);
+  const sentAt = state.sent.length;
+  for (const run of before.runs)
+    await processBrowserRun(run.id, created.checkId);
+  expect(state.sent.slice(sentAt).sort()).toEqual(
+    [
+      ...Array(2).fill(resolveBusinessPrompt(prompts[0], brand).text),
+      ...Array(2).fill(prompts[1]),
+    ].sort(),
+  );
+  const after = (await getCheck(created.checkId))!;
+  expect(after.status).toBe("completed");
+  expect(
+    after.runs.every(
+      (r) => r.prompt_text === before.prompts![r.prompt_index!].text,
+    ),
+  ).toBe(true);
 });

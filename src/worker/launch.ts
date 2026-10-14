@@ -21,9 +21,16 @@ export function proxyFromEnv(session = randomBytes(6).toString("hex")) {
   // Gateways are often written as host:port or user:pass@host:port; without a
   // scheme, URL parsing would drop the port or credentials.
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : "http://" + raw;
+  // Accept the placeholder written plainly or URL-encoded (%7Bsession%7D);
+  // otherwise every run would reuse one literal "{session}" id and one IP.
+  const placeholder = /\{session\}|%7Bsession%7D/gi;
+  if (process.env.REQUIRE_PROXY === "true" && !placeholder.test(raw))
+    throw new Error(
+      "RESIDENTIAL_PROXY_URL must contain {session} in the username so each run gets its own sticky exit IP.",
+    );
   let u: URL;
   try {
-    u = new URL(withScheme.replaceAll("{session}", session));
+    u = new URL(withScheme.replace(placeholder, session));
   } catch {
     u = new URL("invalid://");
   }
@@ -82,7 +89,10 @@ export async function launchContext(id: string): Promise<BrowserContext> {
       ignoreDefaultArgs: ["--enable-automation"],
       viewport: { width: 1366, height: 820 },
       locale: process.env.BROWSER_LOCALE || "en-IN",
-      timezoneId: process.env.BROWSER_TIMEZONE || "Asia/Kolkata",
+      timezoneId:
+        process.env.BROWSER_TIMEZONE ||
+        process.env.BROWSER_TIMEZONE_ID ||
+        "Asia/Kolkata",
       proxy,
     });
     context.once("close", () => void remove());

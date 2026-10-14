@@ -1,3 +1,5 @@
+> **Repair release 1.5.1:** Start with `../REPAIR_START_HERE.md` and the dated reliability audit. The notes below describe the earlier v1.5 release.
+
 # Verification — v1.5.0, five sources
 
 This record supersedes v1.4's test record. Local fixtures are distinct from live upstream evidence.

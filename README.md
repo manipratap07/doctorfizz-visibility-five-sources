@@ -40,16 +40,16 @@ Extract this ZIP to a new folder. **package.json is directly at the ZIP root**; 
 
 Start with [START_HERE.md](START_HERE.md). It explains uploading the new source to the existing VPS, preserving its database/secrets, creating a new repository, configuring Vercel and running your own tests. The detailed existing-server commands are in [docs/DEPLOYMENT_VPS_VERCEL.md](docs/DEPLOYMENT_VPS_VERCEL.md).
 
-**Vercel alone cannot run the worker.** Deploy this version to the VPS as well as Vercel. PostgreSQL, Redis and the frontend-to-backend shared secret remain necessary infrastructure settings; they are not LLM API credentials. The upgrade script changes only the `doctorfizz-llm` Docker project on 127.0.0.1:8089 and retains the existing .env and volumes. It does not alter Caddy or the rank/SEO projects.
+**Vercel alone cannot run the worker.** Deploy this version to the VPS as well as Vercel. PostgreSQL, Redis and the frontend-to-backend shared secret remain necessary infrastructure settings; they are not LLM API credentials. The upgrade script changes only the `doctorfizz-visibility-five-sources` Docker project on 127.0.0.1:8089 and retains the existing .env and volumes. It does not alter Caddy or the rank/SEO projects.
 
 For the first functionality test, run the probe for each source, then try one source at a time before selecting all three. Real failures must never become zero-visibility results.
 
 ## VPS acceptance and diagnostics
 
-Run from `/opt/doctorfizz-llm-visibility/doctorfizz-visibility` in the SSH terminal:
+Run from `/root/doctorfizz-visibility-five-sources` in the SSH terminal:
 
 ```bash
-docker compose -p doctorfizz-llm exec -T worker npm run browser:probe -- --provider=gemini --submit
+docker compose -p doctorfizz-visibility-five-sources exec -T worker npm run browser:probe -- --provider=gemini --submit
 ```
 
 Expected success is `status: ready` with visible DOM evidence, capture timestamp, answer hash and a completion signal. Anything else is a failed acceptance test, even if a separate generic script captured whole-page text.
@@ -57,7 +57,7 @@ Expected success is `status: ready` with visible DOM evidence, capture timestamp
 If selectors need inspection:
 
 ```bash
-docker compose -p doctorfizz-llm exec -T worker npm run browser:inspect -- --provider=gemini --submit
+docker compose -p doctorfizz-visibility-five-sources exec -T worker npm run browser:inspect -- --provider=gemini --submit
 ```
 
 Diagnostics are written to the worker's `internal-debug` directory and excluded from Git and Docker uploads. The JSON summary prints the directory. For the other sources use `chatgpt` or `google-ai`. Add `-e BROWSER_DEBUG=1` to `docker compose exec` to log every poll and save a snapshot of any failed run. The inspect command does not change provider readiness. The probe does, and only a complete answer establishes readiness.
