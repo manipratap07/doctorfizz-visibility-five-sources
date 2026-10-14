@@ -106,6 +106,28 @@ Folder: `~/DoctorFizz_LLM_Visibility_fixed`, branch `fix/browser-detection`. Com
 | 52 | Low | v1.6 se pehle ke `usage_events` rows mein brand plaintext mein rehta tha, aur naya hashed cap unhe ginta nahi tha | Migration purane rows ko usi key se hash karti hai, aur dobara chalne par kuch nahi badalta (test ke saath) |
 | 53 | Low | Kuch docs mein abhi bhi v1.5 ki baatein thi (25 runs, 39 min deadline) | `BUILD_BRIEF`, deploy guide aur `VERIFICATION` update |
 
+### F. VPS deployment ke dauraan mile (live, residential proxy ke saath)
+
+| # | Severity | Bug | Fix |
+|---|---|---|---|
+| 54 | Critical | Proxy ke through Gemini aur Google AI Mode ka `page.goto` kabhi poora nahi hota tha. Chrome ka HTTP/2 Google ke servers ke saath proxy tunnel mein atak jaata hai (`curl` aur bina proxy wala Chrome theek the) | Proxy hone par sirf Google providers `--disable-http2` ke saath chalte hain (~2s load). ChatGPT HTTP/2 par hi rehta hai, kyunki Cloudflare normal Chrome fingerprint dekhta hai |
+| 55 | Critical | VPS par ChatGPT page der se taiyaar hota hai, isliye jaldi daba Enter chupchap ignore ho jaata tha. Sawaal box mein pada rehta aur run timeout hota | Sawaal tabhi "bheja hua" maana jaata hai jab box khaali ho jaaye. Warna send button se 3 baar tak retry. Retry sirf tab hota hai jab text box mein ho, isliye chalta answer kabhi nahi rukta |
+| 56 | High | Proxy URL mein `%7Bsession%7D` (URL-encoded) hone par placeholder replace nahi hota tha, aur saare runs ek hi IP par chalte | Plain aur encoded dono roop pehchaane jaate hain |
+| 57 | Medium | Har poll mein poore page ka text-scan VPS par ~4.6s leta tha | Poora scan har teesre poll par; URL/frame/title har poll par |
+| 58 | Medium | Proxy exit check (ipify) kabhi-kabhi pehli request par slow hota tha, aur run fail ho jaata | Ek retry; phir bhi fail ho to naye session ke saath run retry |
+| 59 | Medium | `APP_URL` naye domain par karne se Vercel frontend ke POST "Origin is not allowed" ho jaate | `ALLOWED_ORIGINS` env: naya domain canonical, Vercel URL allowed |
+| 60 | Medium | "How can Acme help my business grow?" mein "my business" ko galti se brand maan kar context joda jaata tha | Sawaal mein brand ka naam pehle se ho to koi context nahi |
+
+**Mani ke v1.5.3 se merge kiya (live code ka base mera v1.6 hai):** "we/our" sawaalon mein business ka naam, har run ka proxy exit check (`VPS_PUBLIC_IP`), Gemini ka read-aloud-safe stop selector, worker run logs + diagnostics, health mein worker identity, `tsx` runtime tests. **Nahi liya:** single-prompt flow, 5 providers, logged-in browser sessions, aur "fail par refund nahi" wala niyam (refund wapas hai).
+
+## Live deployment (2026-10-14)
+
+- URL: **https://visibility-checker.itzfizz.com** (DNS A record → 187.127.186.47, Caddy + Let's Encrypt)
+- VPS stack: `/root/doctorfizz-visibility-five-sources`, Compose project `doctorfizz-visibility-five-sources`, git `main` = v1.6 (Mani ke commits history mein; unka uncommitted `Dockerfile` change `git stash` mein)
+- Backup (deploy se pehle): `/root/doctorfizz-visibility-backup-20261014-112326` (database dump, source, `.env`); Caddyfile backup `/etc/caddy/Caddyfile.bak-20261014-113050`
+- Acceptance: ChatGPT, Gemini, Google AI Mode — teeno 2/2 answers, residential proxy ke through
+- DrFizz (rank worker, GEO/crawl pm2, xvfb99) aur seo-analyzer deploy ke pehle aur baad dono waqt saamaanya
+
 ## VPS par deploy
 
 1. VPS ki `.env` mein proxy daalo (upgrade script `.env` ko chhoota nahi):

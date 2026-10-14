@@ -1,33 +1,31 @@
-> **Repair release 1.5.1:** Start with `../REPAIR_START_HERE.md` and the dated reliability audit. The notes below describe the earlier v1.5 release.
+# Verification — v1.6.0, three sources
 
-# Verification — v1.5.0, five sources
+Deployed 2026-10-14 to the VPS stack `doctorfizz-visibility-five-sources` (`/root/doctorfizz-visibility-five-sources`, port 8089) and served at **https://visibility-checker.itzfizz.com** (Caddy, Let's Encrypt). The existing `llm.187-127-186-47.sslip.io` route keeps serving the same backend for the Vercel frontend.
 
-This record supersedes v1.4's test record. Local fixtures are distinct from live upstream evidence.
+## Live acceptance on the VPS (residential proxy, public domain)
+
+`npm run browser:acceptance -- --frontend --provider=<id>` creates a real check through https://visibility-checker.itzfizz.com (API → Postgres → Redis → worker → headed Chrome on Xvfb → DataImpulse residential proxy → provider) with two questions per source:
+
+| Source | Result |
+| --- | --- |
+| ChatGPT | passed — 2/2 completed answers captured |
+| Gemini | passed — 2/2 completed answers captured |
+| Google AI Mode | passed — 2/2 completed answers captured |
+
+Every run logged a residential `browser_egress` IP, never the VPS address (187.127.186.47).
+
+## Local checks
 
 | Check | Result |
 | --- | --- |
-| Dependency install | npm ci succeeded using the supplied lockfile |
-| TypeScript | Passed |
-| Unit/security/SQL | 41 passed across four suites |
-| Local Playwright browser/UI | 18 passed: 13 capture/barrier tests, four responsive flow tests and one motion/chrome test |
-| Production build | Next.js 16.4 webpack build passed |
-| Upgrade script syntax | bash -n passed |
-| Responsive flow | Five questions and five source choices; 25-run progress; question tabs and response drawer at 360, 390, 768 and 1440 pixels |
+| TypeScript (`npm run typecheck`, no incremental cache) | passed |
+| Unit, security and Postgres (PGlite) integration — vitest | 62 passed |
+| Worker capture under `tsx` — `npm run test:runtime` | 11 passed |
+| Playwright fixture capture + responsive UI flow (360/390/768/1440 px) | 21 passed (`--workers=1`) |
+| Production build | passed |
 
-The SQL harness runs the migration against PGlite and dispatches all 25 rows through the actual worker processor using a test-only browser adapter. It verifies exact five-question bounds, ownership, quotas, idempotency, stages, per-question answers, partial completion, refunds and old single-question migration compatibility. Production imports no fixture adapter.
+## Not verified
 
-Capture tests verify ordinary terms footers versus blocking dialogs, empty Cloudflare pages, provider error exclusion, Gemini response-only text and observed search/model fields, ChatGPT turn-specific completion controls, old/partial answer exclusion and Google AI Mode public query navigation. Ordinary Google search results are never used as AI answers.
-
-The local Chromium executable initially failed to launch and the external Playwright browser download failed. Extracting the installed browser bundle to the execution runtime resolved launch; all 18 browser tests then passed. This is a local test-environment detail, not a provider access fix. The production worker uses the official matching Playwright image.
-
-## User VPS observations before v1.5 packaging
-
-- Gemini: a generic Playwright script submitted one question and received a real guest answer. The interface displayed Flash-Lite, source labels and Searching the web. This demonstrates one raw interaction, not acceptance of this new scoped adapter, stable availability or all-five prompt completion.
-- ChatGPT: Just a moment verification page, zero chat inputs.
-- Copilot: redirected to sign-in.
-- Duck.ai: prompt submitted, service-unavailable error 02f8.
-- Google AI Mode: no live test yet.
-
-No v1.5 VPS deploy, v1.5 Vercel deploy or full live five-source collection was executed from this environment. Run browser:probe -- --provider=gemini --submit on the user's VPS. Success must include ready, completed answer evidence, page URL, timestamp and SHA-256. Inspect real HTML/screenshots before changing selectors when acceptance fails. An input, a successful build or a Vercel Ready label is not answer-collection proof.
-
-All choices must retain truthful readiness/failure states. No fabricated, cached or unrelated replacement answers are allowed. Current selectors are candidates, including Gemini's DOM selectors; the generic successful VPS script captured whole-page text rather than these scoped nodes.
+- Long-run behaviour under real visitor load (one browser at a time; 90 s per run).
+- Provider UI changes after 2026-10-14; selectors live in `src/worker/browser.config.ts`.
+- Residential proxy quota: one full check (5 questions × 3 sources) uses roughly 60 MB through the proxy.
