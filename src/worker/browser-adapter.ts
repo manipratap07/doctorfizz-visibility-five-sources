@@ -18,6 +18,9 @@ export const CHALLENGE_REASON =
 export const SIGNIN_REASON =
   "The provider requires sign-in before this session can continue.";
 
+export const PROXY_UNVERIFIED_REASON =
+  "The residential proxy exit could not be verified.";
+
 export const CONSENT_REASON =
   "The provider requires accepting its terms before it answers.";
 
@@ -92,10 +95,35 @@ export async function sessionBarrier(
   page: Page,
   answerSelector?: string,
   prompt?: string,
+  // quick: only the cheap URL/frame/title checks (used between full scans).
+  quick = false,
 ): Promise<{
   status: "blocked" | "rate_limited" | "error";
   reason: string;
 } | null> {
+  // Challenge widgets live in cross-origin iframes, so body text never shows them.
+  // Only host and path are matched: a Google AI Mode URL carries the user's
+  // question in ?q=, which may itself name a CAPTCHA vendor's domain.
+  const url = page.url();
+  const challengeFrame = page.frames().some((f) => {
+    const { host, path } = urlParts(f.url());
+    return CHALLENGE_HOST.test(host) || /\/recaptcha\//i.test(path);
+  });
+  if (challengeFrame || isChallengePath(url))
+    return {
+      status: "blocked",
+      reason: CHALLENGE_REASON,
+    };
+  if (/^https:\/\/consent\.(google|youtube)\.com\//i.test(url))
+    return {
+      status: "blocked",
+      reason: "The provider requires consent in a blocking dialog.",
+    };
+  const title = await page.title().catch(() => "");
+  if (/^just a moment\s*[.!…]*$/i.test(title.trim()))
+    return { status: "blocked", reason: CHALLENGE_REASON };
+  if (quick) return null;
+
   // Only inspect interface text, excluding known assistant/user conversation roots.
   // checkVisibility() replaces a getComputedStyle walk up every ancestor of every
   // text node, which made each poll take seconds on large chat pages.
@@ -122,28 +150,7 @@ export async function sessionBarrier(
       reason: "The free browser session reached its limit.",
     };
 
-  // Challenge widgets live in cross-origin iframes, so body text never shows them.
-  // Only host and path are matched: a Google AI Mode URL carries the user's
-  // question in ?q=, which may itself name a CAPTCHA vendor's domain.
-  const url = page.url();
-  const challengeFrame = page.frames().some((f) => {
-    const { host, path } = urlParts(f.url());
-    return CHALLENGE_HOST.test(host) || /\/recaptcha\//i.test(path);
-  });
-  if (challengeFrame || isChallengePath(url))
-    return {
-      status: "blocked",
-      reason: CHALLENGE_REASON,
-    };
-  if (/^https:\/\/consent\.(google|youtube)\.com\//i.test(url))
-    return {
-      status: "blocked",
-      reason: "The provider requires consent in a blocking dialog.",
-    };
-
-  const title = await page.title().catch(() => "");
   if (
-    /^just a moment\s*[.!…]*$/i.test(title.trim()) ||
     /performing security verification|verify you are human|verifies you are not a bot|unusual traffic|complete the captcha/i.test(
       interfaceText,
     )
@@ -333,12 +340,47 @@ export async function collectOnPage(
     const send = target.submit
       ? page.locator(target.submit).filter({ visible: true }).first()
       : undefined;
-    // fill() focused the box. Keyboard Enter avoids locator.press re-resolving
-    // a composer that the page swaps out the moment the message is sent,
-    // which threw after the question had already gone out.
-    if (send && (await send.isEnabled({ timeout: 1500 }).catch(() => false)))
-      await send.click({ timeout: 3000 }).catch(() => page.keyboard.press("Enter"));
-    else await page.keyboard.press("Enter");
+    // The question is only "sent" once it has left the composer. On a slow
+    // page (proxy, small VPS) an early Enter can land before the app has
+    // hydrated and is silently ignored, so verify and retry. A retry happens
+    // only while the text is still in the box, so a started answer is never
+    // interrupted or sent twice.
+    const stillInBox = async () => {
+      const left = await box
+        .evaluate((el) =>
+          ((el as HTMLTextAreaElement).value ?? el.textContent ?? "").trim(),
+        )
+        .catch(soft(""));
+      return !!left && input.prompt.trim().startsWith(left.slice(0, 40));
+    };
+    let searchObserved = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // fill() focused the box. Keyboard Enter avoids locator.press re-resolving
+      // a composer that the page swaps out the moment the message is sent.
+      if (send && (await send.isEnabled({ timeout: 1500 }).catch(soft(false))))
+        await send
+          .click({ timeout: 3000 })
+          .catch(() => page.keyboard.press("Enter"));
+      else {
+        await box.focus().catch(soft(undefined));
+        await page.keyboard.press("Enter");
+      }
+      // Check every 250 ms for up to 1.5 s; search indicators can flash
+      // briefly right after sending, and a sent question ends the wait early.
+      let sent = false;
+      for (let waited = 0; waited < 1500 && !sent; waited += 250) {
+        await page.waitForTimeout(250);
+        searchObserved ||=
+          !!target.search && (await visible(page, target.search));
+        sent =
+          (await page
+            .locator(target.answer)
+            .filter({ visible: true })
+            .count()
+            .catch(soft(0))) > before || !(await stillInBox());
+      }
+      if (sent) break;
+    }
 
     await input.onProgress?.(
       "waiting",
@@ -350,12 +392,18 @@ export async function collectOnPage(
     let receivingReported = false;
     let previous = "",
       stable = 0,
-      sawGenerating = false,
-      searchObserved = false;
+      sawGenerating = false;
 
     const softDeadline = (input.deadlineAt ?? Infinity) - 2500;
+    let polls = 0;
     while (!input.signal.aborted && Date.now() < softDeadline) {
-      barrier = await sessionBarrier(page, target.answer, input.prompt);
+      // Full page-text scan every third poll; URL/frame/title checks every poll.
+      barrier = await sessionBarrier(
+        page,
+        target.answer,
+        input.prompt,
+        polls++ % 3 !== 0,
+      );
       if (barrier) return failure(barrier.status, barrier.reason);
 
       searchObserved ||=
@@ -541,6 +589,7 @@ async function saveDebugSnapshot(page: Page, id: string) {
 const needsFreshIdentity = (r: ProviderResult) =>
   r.errorReason === CHALLENGE_REASON ||
   r.errorReason === SIGNIN_REASON ||
+  r.errorReason === PROXY_UNVERIFIED_REASON ||
   r.status === "rate_limited";
 
 async function runOnce(
@@ -551,7 +600,7 @@ async function runOnce(
   let context: BrowserContext | undefined;
   try {
     input.signal.throwIfAborted();
-    context = await launchContext(id);
+    context = await launchContext(id, target.proxyArgs);
   } catch (e) {
     return {
       status: input.signal.aborted ? "timeout" : "error",
@@ -574,7 +623,10 @@ async function runOnce(
     // With a required proxy, prove this run's exit IP is not the VPS before
     // any provider page is opened.
     if (process.env.REQUIRE_PROXY === "true" && process.env.VPS_PUBLIC_IP) {
-      const exit = await egressIp(context).catch(() => "");
+      // One retry: the first request on a fresh sticky session is sometimes slow.
+      const exit = await egressIp(context)
+        .catch(() => egressIp(context))
+        .catch(() => "");
       console.log(
         JSON.stringify({ event: "browser_egress", provider: id, egressIp: exit }),
       );
@@ -583,7 +635,7 @@ async function runOnce(
           status: "error",
           errorReason: exit
             ? "The proxy exit IP is the VPS address; refusing to browse without the residential proxy."
-            : "The residential proxy exit could not be verified.",
+            : PROXY_UNVERIFIED_REASON,
           webSearchUsed: false,
           latencyMs: 0,
         };

@@ -13,9 +13,15 @@ export type BrowserTarget = {
   // Registrable domains owned by the provider: their links (help, terms, privacy,
   // internal redirects) are interface chrome, not citations.
   ownDomains?: string[];
-  // Public browser navigation, never a private provider API call.
-  queryUrl?: string;
+  // Extra Chrome switches used only when the run goes through the proxy.
+  proxyArgs?: string[];
 };
+
+// Through the residential proxy's CONNECT tunnel, Chrome's HTTP/2 sessions to
+// Google front ends stall (page.goto never reaches domcontentloaded), while
+// HTTP/1.1 loads in ~2 s. Measured on the VPS; ChatGPT keeps HTTP/2 because
+// Cloudflare expects a normal Chrome protocol fingerprint.
+const googleProxyArgs = ["--disable-http2"];
 
 const copy =
   'button[aria-label*="Copy" i],button[title*="Copy" i],button[data-tooltip*="Copy" i],button[mattooltip*="Copy" i],button[data-test-id="copy-button"],button:has(mat-icon:has-text("content_copy"))';
@@ -28,6 +34,9 @@ export const browserTargets: Record<string, BrowserTarget> = {
     url: "https://chatgpt.com/",
     input:
       '#prompt-textarea,#mobile-composer-prompt,textarea[name="prompt"],[contenteditable="true"][role="textbox"],textarea[placeholder*="Ask ChatGPT" i],textarea[placeholder*="Message" i]',
+    // The composer's own send button; while generating the same element turns
+    // into "Stop generating", which this label filter never matches.
+    submit: 'button[data-composer-submit][aria-label="Send message"]',
     answer:
       'li[data-message-role="assistant"],[data-message-author-role="assistant"]',
     answerText: "[data-assistant-markdown-root],.markdown",
@@ -53,6 +62,7 @@ export const browserTargets: Record<string, BrowserTarget> = {
       '[data-test-id="bard-mode-menu-button"],button:has-text("Flash-Lite")',
     search: "text=/^Searching the web$/i",
     ownDomains: ["google.com", "gstatic.com", "googleusercontent.com"],
+    proxyArgs: googleProxyArgs,
   },
   "google-ai": {
     // Type into the /ai page like a visitor. Opening search?udm=50&q=... directly
@@ -67,5 +77,6 @@ export const browserTargets: Record<string, BrowserTarget> = {
     stop,
     search: "text=/^(Searching the web|Searching)$/i",
     ownDomains: ["google.com", "google.co.in", "gstatic.com", "googleusercontent.com"],
+    proxyArgs: googleProxyArgs,
   },
 };

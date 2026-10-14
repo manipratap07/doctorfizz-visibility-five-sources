@@ -59,7 +59,10 @@ const profileRoot = () =>
 // Every run gets a throwaway Chrome profile that is deleted when the context
 // closes: no user's questions or history stay on disk, no device identity is
 // shared between users, and no profile lock can outlive a killed container.
-export async function launchContext(id: string): Promise<BrowserContext> {
+export async function launchContext(
+  id: string,
+  proxyArgs: string[] = [],
+): Promise<BrowserContext> {
   await mkdir(profileRoot(), { recursive: true, mode: 0o700 });
   const dir = await mkdtemp(join(profileRoot(), `${id}-`));
   const remove = () => rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -81,7 +84,9 @@ export async function launchContext(id: string): Promise<BrowserContext> {
         "--window-size=1366,900",
         // WebRTC/STUN is UDP and bypasses an HTTP proxy, which would reveal
         // the VPS address to the page; keep it inside the proxy.
-        ...(proxy ? ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] : []),
+        ...(proxy
+          ? ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp", ...proxyArgs]
+          : []),
         // Operator extras, e.g. "--window-position=-2400,0" to keep a headed
         // window off-screen on a desktop machine.
         ...(process.env.BROWSER_ARGS || "").split(/\s+/).filter(Boolean),

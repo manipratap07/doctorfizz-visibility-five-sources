@@ -28,7 +28,7 @@ async function main() {
       reason = r.errorReason || "";
       evidence = r.browserEvidence;
     } else {
-      const context = await launchContext(id);
+      const context = await launchContext(id, target.proxyArgs);
       try {
         console.log(
           JSON.stringify({ provider: id, egressIp: await egressIp(context).catch((e) => "unknown: " + e.message) }),

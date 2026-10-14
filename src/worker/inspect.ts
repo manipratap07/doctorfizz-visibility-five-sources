@@ -17,7 +17,7 @@ async function main() {
   const directory = join("internal-debug", id + "-" + Date.now());
   await mkdir(directory, { recursive: true, mode: 0o700 });
   // Same browser, profile style and proxy route as production runs.
-  const context = await launchContext(id);
+  const context = await launchContext(id, target.proxyArgs);
   const exitIp = await egressIp(context).catch((e) => "unknown: " + e.message);
   const failures: { url: string; status?: number; error?: string }[] = [];
   const safeUrl = (raw: string) => {
