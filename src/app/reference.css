@@ -677,7 +677,7 @@ h1.stack {
   min-height: 100vh;
   display: flex;
   align-items: center;
-  padding: var(--s9) 0;
+  padding-block: var(--s9);
 }
 .pin-grid {
   display: grid;
@@ -1297,7 +1297,7 @@ h1.stack {
   }
   .pin-inner {
     min-height: 0;
-    padding: var(--s9) 0;
+    padding-block: var(--s9);
   }
   .pin-stack {
     min-height: 0;
